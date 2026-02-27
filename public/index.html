@@ -14,6 +14,9 @@
     <label for="prompt">Prompt</label>
     <textarea id="prompt" placeholder="Example: futuristic city at sunset, volumetric light --ar 16:9 --steps 35 --cfg 8 --neg blurry, lowres"></textarea>
 
+    <label for="apiKey">OpenAI API Key (Optional BYOK)</label>
+    <input id="apiKey" type="password" placeholder="sk-... (optional)" autocomplete="off" />
+
     <div class="actions">
       <button id="generateBtn">Generate JSON</button>
       <button id="downloadBtn" disabled>Download workflow.json</button>
