@@ -5,7 +5,7 @@ Web app that converts a text prompt into a ComfyUI workflow JSON using your prov
 ## Features
 - Prompt-only workflow generation via BYOK provider API (`OpenRouter`, `OpenAI`, `Google`)
 - Workflow topology is generated from your prompt intent (no template selector)
-- Pipeline is: provider draft -> server compiler -> strict runnable workflow JSON
+- Pipeline is: provider API -> direct workflow JSON (no local compiler)
 - Optional inline controls in prompt:
   - `--ckpt your_model.safetensors`
 - BYOK mode: choose `OpenRouter`, `OpenAI`, or `Google Gemini` and provide your API key
@@ -44,3 +44,4 @@ Note: generation is BYOK-only. Local `server.js` serves the frontend only.
 - This repo includes a Vercel serverless route at `api/generate.js`.
 - Frontend calls `/api/generate` and works on Vercel without running `server.js`.
 - Provider selection is sent from the UI (`openrouter`, `openai`, `google`).
+
