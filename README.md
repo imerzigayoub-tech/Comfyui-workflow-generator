@@ -4,7 +4,9 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
 
 ## Features
 - Prompt to workflow JSON with multiple templates:
-  - `txt2img`
+  - `txt2img_fast`
+  - `txt2img_refine`
+  - `txt2img_upscale`
   - `img2img` (includes `LoadImage` + `VAEEncode`)
   - `upscale` (includes `UpscaleModelLoader` + `ImageUpscaleWithModel`)
 - Supports inline prompt controls:
@@ -44,3 +46,4 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
 - This repo includes a Vercel serverless route at `api/generate.js`.
 - Frontend calls `/api/generate` and works on Vercel without running `server.js`.
 - Provider selection is sent from the UI (`local`, `openrouter`, `openai`, `google`).
+- Auto template routing picks different workflow graphs from prompt intent (detail/refine/upscale/edit).

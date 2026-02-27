@@ -10,7 +10,10 @@ const PARAM_JSON_SCHEMA = {
     cfg: { type: "number", minimum: 1, maximum: 20 },
     width: { type: "integer", minimum: 512, maximum: 1536 },
     height: { type: "integer", minimum: 512, maximum: 1536 },
-    template: { type: "string", enum: ["txt2img", "img2img", "upscale", "auto"] },
+    template: {
+      type: "string",
+      enum: ["txt2img", "txt2img_fast", "txt2img_refine", "txt2img_upscale", "img2img", "upscale", "auto"]
+    },
     denoise: { type: "number", minimum: 0.05, maximum: 1 },
     upscaleFactor: { type: "number", minimum: 1.5, maximum: 4 },
     sourceImage: { type: "string" }
@@ -85,7 +88,7 @@ async function parseWithOpenRouter(prompt, apiKey) {
         {
           role: "system",
           content:
-            "Return ONLY a JSON object with keys: prompt, negativePrompt, steps, cfg, width, height, template, denoise, upscaleFactor, sourceImage. template must be txt2img|img2img|upscale|auto."
+            "Return ONLY a JSON object with keys: prompt, negativePrompt, steps, cfg, width, height, template, denoise, upscaleFactor, sourceImage. template must be txt2img|txt2img_fast|txt2img_refine|txt2img_upscale|img2img|upscale|auto."
         },
         {
           role: "user",
@@ -122,7 +125,7 @@ async function parseWithGoogle(prompt, apiKey) {
             parts: [
               {
                 text:
-                  "Return ONLY a JSON object with keys: prompt, negativePrompt, steps, cfg, width, height, template, denoise, upscaleFactor, sourceImage. template must be txt2img|img2img|upscale|auto. No markdown.\\n\\nPrompt:\\n" +
+                  "Return ONLY a JSON object with keys: prompt, negativePrompt, steps, cfg, width, height, template, denoise, upscaleFactor, sourceImage. template must be txt2img|txt2img_fast|txt2img_refine|txt2img_upscale|img2img|upscale|auto. No markdown.\\n\\nPrompt:\\n" +
                   (prompt || "")
               }
             ]
@@ -183,7 +186,7 @@ module.exports = async (req, res) => {
 
     const parsed = parseArgs(prompt);
     const { template, workflow } = buildWorkflow(prompt, requestedTemplate);
-    res.status(200).json({ workflow, mode: "local-parser", parsed, template: resolveTemplate(requestedTemplate, parsed.prompt) || template });
+    res.status(200).json({ workflow, mode: "local-parser", parsed, template: template || resolveTemplate(requestedTemplate, parsed.prompt) });
   } catch (error) {
     res.status(400).json({ error: error.message || "Invalid request body." });
   }
