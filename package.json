@@ -1,0 +1,13 @@
+﻿{
+  "name": "comfyui-workflow-generator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Generate ComfyUI workflow JSON from a text prompt.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

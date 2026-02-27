@@ -1,0 +1,28 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ComfyUI Workflow Generator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>ComfyUI Workflow Generator</h1>
+    <p class="subtitle">Generate workflow JSON from your prompt and import it into ComfyUI.</p>
+
+    <label for="prompt">Prompt</label>
+    <textarea id="prompt" placeholder="Example: futuristic city at sunset, volumetric light --ar 16:9 --steps 35 --cfg 8 --neg blurry, lowres"></textarea>
+
+    <div class="actions">
+      <button id="generateBtn">Generate JSON</button>
+      <button id="downloadBtn" disabled>Download workflow.json</button>
+    </div>
+
+    <label for="output">Workflow JSON</label>
+    <pre id="output">{}</pre>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
