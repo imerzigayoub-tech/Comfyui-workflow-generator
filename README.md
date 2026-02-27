@@ -21,6 +21,7 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
 - Optional BYOK mode: choose `OpenRouter`, `OpenAI`, or `Google Gemini` and provide your API key
   - In BYOK mode, the provider generates a full ComfyUI workflow JSON from the prompt
 - Download generated `workflow.json`
+  - Download now exports node-based `workflow-ui.json` for ComfyUI canvas import
 
 ## Run
 1. Open terminal in this folder:

@@ -8,6 +8,7 @@ const downloadBtn = document.getElementById("downloadBtn");
 const statusText = document.getElementById("status");
 
 let latestWorkflow = null;
+let latestWorkflowApi = null;
 
 async function generateWorkflow() {
   generateBtn.disabled = true;
@@ -30,7 +31,8 @@ async function generateWorkflow() {
     }
 
     const data = await response.json();
-    latestWorkflow = data.workflow;
+    latestWorkflowApi = data.workflow || null;
+    latestWorkflow = data.workflowUi || data.workflow || null;
     output.textContent = JSON.stringify(latestWorkflow, null, 2);
     statusText.textContent = `Mode: ${data.mode || "unknown"} | Template: ${data.template || "unknown"}`;
     downloadBtn.disabled = false;
@@ -54,7 +56,7 @@ function downloadWorkflow() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = "workflow.json";
+  link.download = "workflow-ui.json";
   document.body.appendChild(link);
   link.click();
   link.remove();

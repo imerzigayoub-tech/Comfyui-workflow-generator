@@ -2,7 +2,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const { buildWorkflow } = require("./lib/workflow");
+const { buildWorkflow, apiWorkflowToUiWorkflow } = require("./lib/workflow");
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -62,7 +62,8 @@ const server = http.createServer((req, res) => {
         const payload = JSON.parse(body || "{}");
         const requestedTemplate = (payload.template || "auto").toLowerCase();
         const { template, workflow } = buildWorkflow(payload.prompt || "", requestedTemplate);
-        sendJson(res, 200, { workflow, mode: "local-parser", template });
+        const workflowUi = apiWorkflowToUiWorkflow(workflow);
+        sendJson(res, 200, { workflow, workflowUi, mode: "local-parser", template });
       } catch (error) {
         sendJson(res, 400, { error: "Invalid JSON body." });
       }

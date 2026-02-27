@@ -1,4 +1,4 @@
-const { buildWorkflow, parseArgs, resolveTemplate } = require("../lib/workflow");
+const { buildWorkflow, parseArgs, resolveTemplate, apiWorkflowToUiWorkflow } = require("../lib/workflow");
 
 function extractJsonObject(text) {
   if (!text) {
@@ -38,6 +38,20 @@ function validateWorkflow(workflow) {
   }
 
   return workflow;
+}
+
+function normalizeWorkflowShape(candidate) {
+  if (
+    candidate &&
+    typeof candidate === "object" &&
+    !Array.isArray(candidate) &&
+    candidate.workflow &&
+    typeof candidate.workflow === "object" &&
+    !Array.isArray(candidate.workflow)
+  ) {
+    return candidate.workflow;
+  }
+  return candidate;
 }
 
 function workflowSystemPrompt() {
@@ -170,14 +184,23 @@ module.exports = async (req, res) => {
       "";
 
     if (apiKey && provider !== "local") {
-      const workflow = await generateWorkflowWithProvider(provider, prompt, apiKey);
-      res.status(200).json({ workflow, mode: "byok-generated", provider, template: "llm-generated" });
+      const workflowApi = normalizeWorkflowShape(await generateWorkflowWithProvider(provider, prompt, apiKey));
+      const workflow = validateWorkflow(workflowApi);
+      const workflowUi = apiWorkflowToUiWorkflow(workflow);
+      res.status(200).json({ workflow, workflowUi, mode: "byok-generated", provider, template: "llm-generated" });
       return;
     }
 
     const parsed = parseArgs(prompt);
     const { template, workflow } = buildWorkflow(prompt, requestedTemplate);
-    res.status(200).json({ workflow, mode: "local-parser", parsed, template: template || resolveTemplate(requestedTemplate, parsed.prompt) });
+    const workflowUi = apiWorkflowToUiWorkflow(workflow);
+    res.status(200).json({
+      workflow,
+      workflowUi,
+      mode: "local-parser",
+      parsed,
+      template: template || resolveTemplate(requestedTemplate, parsed.prompt)
+    });
   } catch (error) {
     res.status(400).json({ error: error.message || "Invalid request body." });
   }
