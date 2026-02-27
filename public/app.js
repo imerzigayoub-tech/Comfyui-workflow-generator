@@ -17,8 +17,8 @@ async function generateWorkflow() {
   try {
     const apiKey = apiKeyInput.value.trim();
     const provider = providerInput.value;
-    if (apiKey && provider === "local") {
-      throw new Error("API key is set but provider is Local. Choose OpenRouter, OpenAI, or Google.");
+    if (!apiKey) {
+      throw new Error("API key is required.");
     }
 
     const response = await fetch("/api/generate", {

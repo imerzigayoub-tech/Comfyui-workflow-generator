@@ -19,7 +19,6 @@
       <option value="openrouter">OpenRouter (BYOK)</option>
       <option value="openai">OpenAI (BYOK)</option>
       <option value="google">Google Gemini (BYOK)</option>
-      <option value="local">Local parser (no key)</option>
     </select>
 
     <label for="template">Workflow Template</label>
@@ -32,14 +31,14 @@
       <option value="upscale">Upscale</option>
     </select>
 
-    <label for="apiKey">API Key (Optional)</label>
-    <input id="apiKey" type="password" placeholder="sk-... (optional)" autocomplete="off" />
+    <label for="apiKey">API Key (Required)</label>
+    <input id="apiKey" type="password" placeholder="Enter provider API key" autocomplete="off" />
 
     <div class="actions">
       <button id="generateBtn">Generate JSON</button>
       <button id="downloadBtn" disabled>Download workflow-ui.json</button>
     </div>
-    <p id="status" class="subtitle">Mode: local-parser | Template: txt2img_fast</p>
+    <p id="status" class="subtitle">Mode: byok-generated | Template: llm-generated</p>
 
     <label for="output">Workflow JSON</label>
     <pre id="output">{}</pre>

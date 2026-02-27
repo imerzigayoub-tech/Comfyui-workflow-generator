@@ -2,7 +2,6 @@
 const fs = require("fs");
 const path = require("path");
 
-const { buildWorkflow, apiWorkflowToUiWorkflow } = require("./lib/workflow");
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -60,16 +59,9 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const payload = JSON.parse(body || "{}");
-        if (payload.apiKey) {
-          sendJson(res, 400, {
-            error: "Local server mode does not execute BYOK providers. Use deployed /api/generate on Vercel for API-key generation."
-          });
-          return;
-        }
-        const requestedTemplate = (payload.template || "auto").toLowerCase();
-        const { template, workflow } = buildWorkflow(payload.prompt || "", requestedTemplate);
-        const workflowUi = apiWorkflowToUiWorkflow(workflow);
-        sendJson(res, 200, { workflow, workflowUi, mode: "local-parser", template });
+        sendJson(res, 400, {
+          error: "Generation is BYOK-only. Use deployed /api/generate on Vercel with provider + API key."
+        });
       } catch (error) {
         sendJson(res, 400, { error: "Invalid JSON body." });
       }

@@ -1,6 +1,6 @@
 ﻿# ComfyUI Workflow Generator
 
-Simple local app that converts a text prompt into a ComfyUI workflow JSON.
+Web app that converts a text prompt into a ComfyUI workflow JSON using your provider API key (BYOK).
 
 ## Features
 - Prompt to workflow JSON with multiple templates:
@@ -19,9 +19,8 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
   - `--denoise 0.65` (img2img)
   - `--upscale 2` (upscale)
   - `--image input.png` (img2img/upscale source image name)
-- Optional BYOK mode: choose `OpenRouter`, `OpenAI`, or `Google Gemini` and provide your API key
-  - In BYOK mode, the provider generates a full ComfyUI workflow JSON from the prompt
-  - BYOK execution is available on deployed `/api/generate` (Vercel serverless route)
+- BYOK mode: choose `OpenRouter`, `OpenAI`, or `Google Gemini` and provide your API key
+  - Provider generates a full ComfyUI workflow JSON from the prompt
 - Download generated `workflow.json`
   - Download now exports node-based `workflow-ui.json` for ComfyUI canvas import
 
@@ -37,10 +36,10 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
 3. Open:
    - `http://localhost:3000`
 
-Note: local `server.js` is for local parser workflows. API-key BYOK generation runs through deployed serverless API.
+Note: generation is BYOK-only. Local `server.js` serves the frontend only.
 
 ## Import into ComfyUI
-1. Generate and download `workflow.json` from this app.
+1. Generate and download `workflow-ui.json` from this app.
 2. In ComfyUI, use workflow load/import and select that file.
 
 ## Notes
@@ -51,5 +50,4 @@ Note: local `server.js` is for local parser workflows. API-key BYOK generation r
 ## Vercel Deploy
 - This repo includes a Vercel serverless route at `api/generate.js`.
 - Frontend calls `/api/generate` and works on Vercel without running `server.js`.
-- Provider selection is sent from the UI (`local`, `openrouter`, `openai`, `google`).
-- Auto template routing picks different workflow graphs from prompt intent (detail/refine/upscale/edit).
+- Provider selection is sent from the UI (`openrouter`, `openai`, `google`).

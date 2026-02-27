@@ -1,4 +1,4 @@
-const { buildWorkflow, parseArgs, resolveTemplate, apiWorkflowToUiWorkflow } = require("../lib/workflow");
+const { parseArgs, apiWorkflowToUiWorkflow } = require("../lib/workflow");
 const DEFAULT_CKPT_NAME = process.env.DEFAULT_CKPT_NAME || "sd_xl_base_1.0.safetensors";
 const SCHEDULERS = new Set(["simple", "sgm_uniform", "karras", "exponential", "ddim_uniform", "beta", "normal", "linear_quadratic", "kl_optimal"]);
 
@@ -321,7 +321,6 @@ module.exports = async (req, res) => {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
     const prompt = body.prompt || "";
     const provider = (body.provider || "openrouter").toLowerCase();
-    const requestedTemplate = (body.template || "auto").toLowerCase();
     const openrouterModel = body.openrouterModel || process.env.OPENROUTER_MODEL || "openrouter/auto";
     const apiKey =
       body.apiKey ||
@@ -330,44 +329,37 @@ module.exports = async (req, res) => {
       req.headers["x-google-api-key"] ||
       "";
 
-    if (apiKey && provider === "local") {
+    if (!apiKey) {
       res.status(400).json({
-        error: "API key provided with provider=local. Choose openrouter, openai, or google for BYOK generation."
+        error: "API key is required. Provide a key and choose openrouter, openai, or google."
       });
       return;
     }
 
-    if (apiKey && provider !== "local") {
-      const parsedPrompt = parseArgs(prompt);
-      const workflowApi = normalizeWorkflowShape(
-        await generateWorkflowWithProvider(provider, prompt, apiKey, { openrouterModel })
-      );
-      const workflowCandidate = validateWorkflow(
-        normalizeRuntimeDefaults(normalizeWorkflowLinks(workflowApi), parsedPrompt.ckptName || DEFAULT_CKPT_NAME)
-      );
-      if (hasBrokenLinks(workflowCandidate)) {
-        res.status(422).json({
-          error: "Provider returned incomplete links. No local fallback used in strict BYOK mode."
-        });
-        return;
-      }
-
-      const workflow = workflowCandidate;
-      const workflowUi = apiWorkflowToUiWorkflow(workflow);
-      res.status(200).json({ workflow, workflowUi, mode: "byok-generated", provider, template: "llm-generated" });
+    if (provider === "local") {
+      res.status(400).json({
+        error: "provider=local is disabled. Use openrouter, openai, or google."
+      });
       return;
     }
 
-    const parsed = parseArgs(prompt);
-    const { template, workflow } = buildWorkflow(prompt, requestedTemplate);
+    const parsedPrompt = parseArgs(prompt);
+    const workflowApi = normalizeWorkflowShape(
+      await generateWorkflowWithProvider(provider, prompt, apiKey, { openrouterModel })
+    );
+    const workflowCandidate = validateWorkflow(
+      normalizeRuntimeDefaults(normalizeWorkflowLinks(workflowApi), parsedPrompt.ckptName || DEFAULT_CKPT_NAME)
+    );
+    if (hasBrokenLinks(workflowCandidate)) {
+      res.status(422).json({
+        error: "Provider returned incomplete links."
+      });
+      return;
+    }
+
+    const workflow = workflowCandidate;
     const workflowUi = apiWorkflowToUiWorkflow(workflow);
-    res.status(200).json({
-      workflow,
-      workflowUi,
-      mode: "local-parser",
-      parsed,
-      template: template || resolveTemplate(requestedTemplate, parsed.prompt)
-    });
+    res.status(200).json({ workflow, workflowUi, mode: "byok-generated", provider, template: "llm-generated" });
   } catch (error) {
     res.status(400).json({ error: error.message || "Invalid request body." });
   }
