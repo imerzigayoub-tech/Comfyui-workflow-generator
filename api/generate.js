@@ -1,6 +1,7 @@
+const { apiWorkflowToUiWorkflow } = require("../lib/workflow");
 const DEFAULT_OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini";
-const REQUEST_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 60000);
-const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 2200);
+const REQUEST_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 120000);
+const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 1200);
 
 function normalizeApiKey(raw) {
   const value = String(raw || "").trim();
@@ -39,14 +40,12 @@ function extractJsonObject(text) {
 
 function workflowSystemPrompt() {
   return [
-    "Generate a ComfyUI workflow directly from the user prompt.",
+    "Generate a ComfyUI API workflow from the user prompt.",
     "Return JSON only.",
-    "Output format must be:",
-    "{ intent, workflow_ui }",
-    "where workflow_ui is ComfyUI UI workflow format with keys:",
-    "last_node_id, last_link_id, nodes (array), links (array), groups, config, extra, version.",
-    "Every node must include: id, type, inputs, outputs, widgets_values, pos.",
-    "Every required connection must exist in links.",
+    "Output format must be: { intent, workflow_api }",
+    "workflow_api must be ComfyUI API prompt format: object keyed by node id strings.",
+    "Each node must include: class_type, inputs, _meta.title.",
+    "Linked inputs must be in format: [\"<node_id>\", <output_index>].",
     "No markdown, no explanation, no extra text.",
     "Use node names and widgets that are compatible with ComfyUI defaults."
   ].join(" ");
@@ -84,6 +83,23 @@ function validateWorkflowUi(workflowUi) {
   return workflowUi;
 }
 
+function validateWorkflowApi(workflowApi) {
+  if (!workflowApi || typeof workflowApi !== "object" || Array.isArray(workflowApi)) {
+    throw new Error("workflow_api is not an object.");
+  }
+  const ids = Object.keys(workflowApi);
+  if (ids.length < 3) {
+    throw new Error("workflow_api has too few nodes.");
+  }
+  for (const id of ids) {
+    const node = workflowApi[id];
+    if (!node || typeof node !== "object") throw new Error(`workflow_api node ${id} is invalid.`);
+    if (!node.class_type) throw new Error(`workflow_api node ${id} missing class_type.`);
+    if (!node.inputs || typeof node.inputs !== "object") throw new Error(`workflow_api node ${id} missing inputs.`);
+  }
+  return workflowApi;
+}
+
 async function generateWithOpenAI(prompt, apiKey) {
   const normalizedKey = normalizeApiKey(apiKey);
   const response = await fetchWithTimeout("https://api.openai.com/v1/responses", {
@@ -117,38 +133,52 @@ async function generateWithOpenRouter(prompt, apiKey, model = DEFAULT_OPENROUTER
     throw new Error("OpenRouter API key is empty.");
   }
 
-  const response = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${normalizedKey}`,
-      "X-API-Key": normalizedKey,
-      "x-api-key": normalizedKey,
-      "Content-Type": "application/json",
-      "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost",
-      "X-Title": process.env.OPENROUTER_APP_NAME || "ComfyUI Workflow Generator"
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: workflowSystemPrompt() },
-        { role: "user", content: prompt || "" }
-      ],
-      temperature: 0.2,
-      max_tokens: LLM_MAX_TOKENS,
-      response_format: { type: "json_object" }
-    })
-  });
+  const modelsToTry = [model, "openai/gpt-4o-mini"];
+  let lastError = null;
 
-  if (!response.ok) {
-    const body = await response.text();
-    if (response.status === 401) {
-      throw new Error(`OpenRouter auth failed (401). Check key/provider. Body: ${body.slice(0, 220)}`);
+  for (const candidateModel of modelsToTry) {
+    try {
+      const response = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${normalizedKey}`,
+          "X-API-Key": normalizedKey,
+          "x-api-key": normalizedKey,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost",
+          "X-Title": process.env.OPENROUTER_APP_NAME || "ComfyUI Workflow Generator"
+        },
+        body: JSON.stringify({
+          model: candidateModel,
+          messages: [
+            { role: "system", content: workflowSystemPrompt() },
+            { role: "user", content: prompt || "" }
+          ],
+          temperature: 0.2,
+          max_tokens: LLM_MAX_TOKENS,
+          response_format: { type: "json_object" }
+        })
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        if (response.status === 401) {
+          throw new Error(`OpenRouter auth failed (401). Check key/provider. Body: ${body.slice(0, 220)}`);
+        }
+        throw new Error(`BYOK request failed (${response.status}): ${body.slice(0, 300)}`);
+      }
+
+      const data = await response.json();
+      return extractJsonObject(data.choices?.[0]?.message?.content || "");
+    } catch (error) {
+      lastError = error;
+      if (!/timed out/i.test(String(error?.message || ""))) {
+        throw error;
+      }
     }
-    throw new Error(`BYOK request failed (${response.status}): ${body.slice(0, 300)}`);
   }
 
-  const data = await response.json();
-  return extractJsonObject(data.choices?.[0]?.message?.content || "");
+  throw lastError || new Error("OpenRouter request failed.");
 }
 
 async function generateWithGoogle(prompt, apiKey) {
@@ -214,9 +244,11 @@ module.exports = async (req, res) => {
     }
 
     const result = await generateWithProvider(provider, prompt, apiKey, { openrouterModel });
-    const workflowUi = validateWorkflowUi(result.workflow_ui || result.workflowUi || result.workflow || result);
+    const workflowApi = validateWorkflowApi(result.workflow_api || result.workflow || result);
+    const workflowUi = validateWorkflowUi(apiWorkflowToUiWorkflow(workflowApi));
 
     res.status(200).json({
+      workflow: workflowApi,
       workflowUi,
       draft: result,
       mode: "byok-direct",
