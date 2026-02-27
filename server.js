@@ -1,7 +1,7 @@
 ﻿const http = require("http");
 const fs = require("fs");
 const path = require("path");
-
+const generateHandler = require("./api/generate");
 
 const PORT = process.env.PORT || 3000;
 const PUBLIC_DIR = path.join(__dirname, "public");
@@ -58,9 +58,25 @@ const server = http.createServer((req, res) => {
 
     req.on("end", () => {
       try {
-        const payload = JSON.parse(body || "{}");
-        sendJson(res, 400, {
-          error: "Generation is BYOK-only. Use deployed /api/generate on Vercel with provider + API key."
+        const mockReq = {
+          method: "POST",
+          headers: req.headers,
+          body: body || "{}"
+        };
+
+        const mockRes = {
+          _status: 200,
+          status(code) {
+            this._status = code;
+            return this;
+          },
+          json(payload) {
+            sendJson(res, this._status || 200, payload);
+          }
+        };
+
+        Promise.resolve(generateHandler(mockReq, mockRes)).catch(error => {
+          sendJson(res, 500, { error: error.message || "Unhandled server error." });
         });
       } catch (error) {
         sendJson(res, 400, { error: "Invalid JSON body." });
