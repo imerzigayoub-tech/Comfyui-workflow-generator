@@ -1,25 +1,4 @@
-﻿const { buildWorkflow, parseArgs, buildWorkflowFromParsed, resolveTemplate } = require("../lib/workflow");
-
-const PARAM_JSON_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    prompt: { type: "string" },
-    negativePrompt: { type: "string" },
-    steps: { type: "integer", minimum: 1, maximum: 80 },
-    cfg: { type: "number", minimum: 1, maximum: 20 },
-    width: { type: "integer", minimum: 512, maximum: 1536 },
-    height: { type: "integer", minimum: 512, maximum: 1536 },
-    template: {
-      type: "string",
-      enum: ["txt2img", "txt2img_fast", "txt2img_refine", "txt2img_upscale", "img2img", "upscale", "auto"]
-    },
-    denoise: { type: "number", minimum: 0.05, maximum: 1 },
-    upscaleFactor: { type: "number", minimum: 1.5, maximum: 4 },
-    sourceImage: { type: "string" }
-  },
-  required: ["prompt", "negativePrompt", "steps", "cfg", "width", "height"]
-};
+const { buildWorkflow, parseArgs, resolveTemplate } = require("../lib/workflow");
 
 function extractJsonObject(text) {
   if (!text) {
@@ -35,7 +14,50 @@ function extractJsonObject(text) {
   return JSON.parse(text.slice(start, end + 1));
 }
 
-async function parseWithOpenAI(prompt, apiKey) {
+function validateWorkflow(workflow) {
+  if (!workflow || typeof workflow !== "object" || Array.isArray(workflow)) {
+    throw new Error("Generated workflow is not an object.");
+  }
+
+  const nodeIds = Object.keys(workflow);
+  if (nodeIds.length < 3) {
+    throw new Error("Generated workflow has too few nodes.");
+  }
+
+  for (const id of nodeIds) {
+    const node = workflow[id];
+    if (!node || typeof node !== "object") {
+      throw new Error(`Invalid node at id ${id}.`);
+    }
+    if (!node.class_type || typeof node.class_type !== "string") {
+      throw new Error(`Node ${id} missing class_type.`);
+    }
+    if (!node.inputs || typeof node.inputs !== "object") {
+      throw new Error(`Node ${id} missing inputs.`);
+    }
+  }
+
+  return workflow;
+}
+
+function workflowSystemPrompt() {
+  return [
+    "You generate ComfyUI workflow JSON from user intent.",
+    "Return ONLY one JSON object (no markdown, no explanation).",
+    "The object must be a valid ComfyUI workflow graph: keys are node ids as strings.",
+    "Each node must have: class_type, inputs, _meta.title.",
+    "Prefer common built-in nodes only.",
+    "Use one of these structures depending on intent:",
+    "- txt2img: CheckpointLoaderSimple, CLIPTextEncode (pos/neg), EmptyLatentImage, KSampler, VAEDecode, SaveImage",
+    "- img2img: include LoadImage and VAEEncode before KSampler",
+    "- upscale: include LoadImage, UpscaleModelLoader, ImageUpscaleWithModel, SaveImage",
+    "If uncertain, choose txt2img.",
+    "Set reasonable defaults for steps/cfg/size/seed.",
+    "Output strictly JSON only."
+  ].join(" ");
+}
+
+async function generateWithOpenAI(prompt, apiKey) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
@@ -45,24 +67,9 @@ async function parseWithOpenAI(prompt, apiKey) {
     body: JSON.stringify({
       model: "gpt-4.1-mini",
       input: [
-        {
-          role: "system",
-          content:
-            "Convert a user image prompt into ComfyUI generation params. You may choose template txt2img/img2img/upscale. Return only valid JSON."
-        },
-        {
-          role: "user",
-          content: prompt || ""
-        }
-      ],
-      text: {
-        format: {
-          type: "json_schema",
-          name: "comfy_params",
-          strict: true,
-          schema: PARAM_JSON_SCHEMA
-        }
-      }
+        { role: "system", content: workflowSystemPrompt() },
+        { role: "user", content: prompt || "" }
+      ]
     })
   });
 
@@ -72,10 +79,10 @@ async function parseWithOpenAI(prompt, apiKey) {
   }
 
   const data = await response.json();
-  return extractJsonObject(data.output_text || "");
+  return validateWorkflow(extractJsonObject(data.output_text || ""));
 }
 
-async function parseWithOpenRouter(prompt, apiKey) {
+async function generateWithOpenRouter(prompt, apiKey) {
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -85,17 +92,10 @@ async function parseWithOpenRouter(prompt, apiKey) {
     body: JSON.stringify({
       model: "openai/gpt-4o-mini",
       messages: [
-        {
-          role: "system",
-          content:
-            "Return ONLY a JSON object with keys: prompt, negativePrompt, steps, cfg, width, height, template, denoise, upscaleFactor, sourceImage. template must be txt2img|txt2img_fast|txt2img_refine|txt2img_upscale|img2img|upscale|auto."
-        },
-        {
-          role: "user",
-          content: prompt || ""
-        }
+        { role: "system", content: workflowSystemPrompt() },
+        { role: "user", content: prompt || "" }
       ],
-      temperature: 0.2
+      temperature: 0.3
     })
   });
 
@@ -106,27 +106,23 @@ async function parseWithOpenRouter(prompt, apiKey) {
 
   const data = await response.json();
   const text = data.choices?.[0]?.message?.content || "";
-  return extractJsonObject(text);
+  return validateWorkflow(extractJsonObject(text));
 }
 
-async function parseWithGoogle(prompt, apiKey) {
+async function generateWithGoogle(prompt, apiKey) {
   const response = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
     {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        generationConfig: { temperature: 0.2 },
+        generationConfig: { temperature: 0.3 },
         contents: [
           {
             role: "user",
             parts: [
               {
-                text:
-                  "Return ONLY a JSON object with keys: prompt, negativePrompt, steps, cfg, width, height, template, denoise, upscaleFactor, sourceImage. template must be txt2img|txt2img_fast|txt2img_refine|txt2img_upscale|img2img|upscale|auto. No markdown.\\n\\nPrompt:\\n" +
-                  (prompt || "")
+                text: `${workflowSystemPrompt()}\n\nUser prompt:\n${prompt || ""}`
               }
             ]
           }
@@ -142,17 +138,17 @@ async function parseWithGoogle(prompt, apiKey) {
 
   const data = await response.json();
   const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  return extractJsonObject(text);
+  return validateWorkflow(extractJsonObject(text));
 }
 
-async function parseWithProvider(provider, prompt, apiKey) {
+async function generateWorkflowWithProvider(provider, prompt, apiKey) {
   if (provider === "openai") {
-    return parseWithOpenAI(prompt, apiKey);
+    return generateWithOpenAI(prompt, apiKey);
   }
   if (provider === "google") {
-    return parseWithGoogle(prompt, apiKey);
+    return generateWithGoogle(prompt, apiKey);
   }
-  return parseWithOpenRouter(prompt, apiKey);
+  return generateWithOpenRouter(prompt, apiKey);
 }
 
 module.exports = async (req, res) => {
@@ -174,13 +170,8 @@ module.exports = async (req, res) => {
       "";
 
     if (apiKey && provider !== "local") {
-      const llmParsed = await parseWithProvider(provider, prompt, apiKey);
-      const merged = {
-        ...parseArgs(prompt),
-        ...llmParsed
-      };
-      const { template, workflow } = buildWorkflowFromParsed(merged, requestedTemplate === "auto" ? merged.template : requestedTemplate);
-      res.status(200).json({ workflow, mode: "byok", provider, template, parsed: merged });
+      const workflow = await generateWorkflowWithProvider(provider, prompt, apiKey);
+      res.status(200).json({ workflow, mode: "byok-generated", provider, template: "llm-generated" });
       return;
     }
 
