@@ -2,6 +2,12 @@ const { parseArgs, apiWorkflowToUiWorkflow } = require("../lib/workflow");
 const DEFAULT_CKPT_NAME = process.env.DEFAULT_CKPT_NAME || "sd_xl_base_1.0.safetensors";
 const SCHEDULERS = new Set(["simple", "sgm_uniform", "karras", "exponential", "ddim_uniform", "beta", "normal", "linear_quadratic", "kl_optimal"]);
 
+function normalizeApiKey(raw) {
+  const value = String(raw || "").trim();
+  if (!value) return "";
+  return value.replace(/^Bearer\s+/i, "").trim();
+}
+
 function extractJsonObject(text) {
   if (!text) {
     throw new Error("Provider returned empty response.");
@@ -308,10 +314,11 @@ function autoRepairLinks(workflow) {
 }
 
 async function generateWithOpenAI(prompt, apiKey) {
+  const normalizedKey = normalizeApiKey(apiKey);
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${normalizedKey}`,
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
@@ -333,10 +340,12 @@ async function generateWithOpenAI(prompt, apiKey) {
 }
 
 async function generateWithOpenRouter(prompt, apiKey, model = process.env.OPENROUTER_MODEL || "openrouter/auto") {
+  const normalizedKey = normalizeApiKey(apiKey);
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
+      Authorization: `Bearer ${normalizedKey}`,
+      "X-API-Key": normalizedKey,
       "Content-Type": "application/json",
       "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost",
       "X-Title": process.env.OPENROUTER_APP_NAME || "ComfyUI Workflow Generator"
@@ -362,8 +371,9 @@ async function generateWithOpenRouter(prompt, apiKey, model = process.env.OPENRO
 }
 
 async function generateWithGoogle(prompt, apiKey) {
+  const normalizedKey = normalizeApiKey(apiKey);
   const response = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(apiKey)}`,
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(normalizedKey)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
