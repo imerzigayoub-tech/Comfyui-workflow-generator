@@ -1,9 +1,11 @@
 ﻿const promptInput = document.getElementById("prompt");
 const output = document.getElementById("output");
 const providerInput = document.getElementById("provider");
+const templateInput = document.getElementById("template");
 const apiKeyInput = document.getElementById("apiKey");
 const generateBtn = document.getElementById("generateBtn");
 const downloadBtn = document.getElementById("downloadBtn");
+const statusText = document.getElementById("status");
 
 let latestWorkflow = null;
 
@@ -18,6 +20,7 @@ async function generateWorkflow() {
       body: JSON.stringify({
         prompt: promptInput.value,
         provider: providerInput.value,
+        template: templateInput.value,
         apiKey: apiKeyInput.value.trim()
       })
     });
@@ -29,9 +32,11 @@ async function generateWorkflow() {
     const data = await response.json();
     latestWorkflow = data.workflow;
     output.textContent = JSON.stringify(latestWorkflow, null, 2);
+    statusText.textContent = `Mode: ${data.mode || "unknown"} | Template: ${data.template || "unknown"}`;
     downloadBtn.disabled = false;
   } catch (error) {
     output.textContent = `Error: ${error.message}`;
+    statusText.textContent = "Mode: error | Template: n/a";
     latestWorkflow = null;
     downloadBtn.disabled = true;
   } finally {

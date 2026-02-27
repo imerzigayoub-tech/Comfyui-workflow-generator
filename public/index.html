@@ -22,6 +22,14 @@
       <option value="google">Google Gemini (BYOK)</option>
     </select>
 
+    <label for="template">Workflow Template</label>
+    <select id="template">
+      <option value="auto">Auto route</option>
+      <option value="txt2img">Text to Image</option>
+      <option value="img2img">Image to Image</option>
+      <option value="upscale">Upscale</option>
+    </select>
+
     <label for="apiKey">API Key (Optional)</label>
     <input id="apiKey" type="password" placeholder="sk-... (optional)" autocomplete="off" />
 
@@ -29,6 +37,7 @@
       <button id="generateBtn">Generate JSON</button>
       <button id="downloadBtn" disabled>Download workflow.json</button>
     </div>
+    <p id="status" class="subtitle">Mode: local-parser | Template: txt2img</p>
 
     <label for="output">Workflow JSON</label>
     <pre id="output">{}</pre>

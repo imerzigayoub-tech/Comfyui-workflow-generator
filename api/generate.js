@@ -1,4 +1,4 @@
-const { buildWorkflow, parseArgs, buildWorkflowFromParsed } = require("../lib/workflow");
+﻿const { buildWorkflow, parseArgs, buildWorkflowFromParsed, resolveTemplate } = require("../lib/workflow");
 
 const PARAM_JSON_SCHEMA = {
   type: "object",
@@ -9,7 +9,11 @@ const PARAM_JSON_SCHEMA = {
     steps: { type: "integer", minimum: 1, maximum: 80 },
     cfg: { type: "number", minimum: 1, maximum: 20 },
     width: { type: "integer", minimum: 512, maximum: 1536 },
-    height: { type: "integer", minimum: 512, maximum: 1536 }
+    height: { type: "integer", minimum: 512, maximum: 1536 },
+    template: { type: "string", enum: ["txt2img", "img2img", "upscale", "auto"] },
+    denoise: { type: "number", minimum: 0.05, maximum: 1 },
+    upscaleFactor: { type: "number", minimum: 1.5, maximum: 4 },
+    sourceImage: { type: "string" }
   },
   required: ["prompt", "negativePrompt", "steps", "cfg", "width", "height"]
 };
@@ -41,7 +45,7 @@ async function parseWithOpenAI(prompt, apiKey) {
         {
           role: "system",
           content:
-            "Convert a user image prompt into ComfyUI generation params. Keep intent, return only valid JSON."
+            "Convert a user image prompt into ComfyUI generation params. You may choose template txt2img/img2img/upscale. Return only valid JSON."
         },
         {
           role: "user",
@@ -81,7 +85,7 @@ async function parseWithOpenRouter(prompt, apiKey) {
         {
           role: "system",
           content:
-            "Return ONLY a JSON object with keys: prompt, negativePrompt, steps, cfg, width, height. No markdown."
+            "Return ONLY a JSON object with keys: prompt, negativePrompt, steps, cfg, width, height, template, denoise, upscaleFactor, sourceImage. template must be txt2img|img2img|upscale|auto."
         },
         {
           role: "user",
@@ -118,7 +122,7 @@ async function parseWithGoogle(prompt, apiKey) {
             parts: [
               {
                 text:
-                  "Return ONLY a JSON object with keys: prompt, negativePrompt, steps, cfg, width, height. No markdown.\n\nPrompt:\n" +
+                  "Return ONLY a JSON object with keys: prompt, negativePrompt, steps, cfg, width, height, template, denoise, upscaleFactor, sourceImage. template must be txt2img|img2img|upscale|auto. No markdown.\\n\\nPrompt:\\n" +
                   (prompt || "")
               }
             ]
@@ -158,6 +162,7 @@ module.exports = async (req, res) => {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
     const prompt = body.prompt || "";
     const provider = (body.provider || "openrouter").toLowerCase();
+    const requestedTemplate = (body.template || "auto").toLowerCase();
     const apiKey =
       body.apiKey ||
       req.headers["x-openrouter-api-key"] ||
@@ -166,15 +171,19 @@ module.exports = async (req, res) => {
       "";
 
     if (apiKey && provider !== "local") {
-      const parsed = await parseWithProvider(provider, prompt, apiKey);
-      const workflow = buildWorkflowFromParsed(parsed);
-      res.status(200).json({ workflow, mode: "byok", provider });
+      const llmParsed = await parseWithProvider(provider, prompt, apiKey);
+      const merged = {
+        ...parseArgs(prompt),
+        ...llmParsed
+      };
+      const { template, workflow } = buildWorkflowFromParsed(merged, requestedTemplate === "auto" ? merged.template : requestedTemplate);
+      res.status(200).json({ workflow, mode: "byok", provider, template, parsed: merged });
       return;
     }
 
-    const workflow = buildWorkflow(prompt);
     const parsed = parseArgs(prompt);
-    res.status(200).json({ workflow, mode: "local-parser", parsed });
+    const { template, workflow } = buildWorkflow(prompt, requestedTemplate);
+    res.status(200).json({ workflow, mode: "local-parser", parsed, template: resolveTemplate(requestedTemplate, parsed.prompt) || template });
   } catch (error) {
     res.status(400).json({ error: error.message || "Invalid request body." });
   }

@@ -3,12 +3,19 @@
 Simple local app that converts a text prompt into a ComfyUI workflow JSON.
 
 ## Features
-- Prompt to workflow JSON (`CheckpointLoaderSimple -> CLIPTextEncode -> KSampler -> VAEDecode -> SaveImage`)
+- Prompt to workflow JSON with multiple templates:
+  - `txt2img`
+  - `img2img` (includes `LoadImage` + `VAEEncode`)
+  - `upscale` (includes `UpscaleModelLoader` + `ImageUpscaleWithModel`)
 - Supports inline prompt controls:
   - `--neg ...` negative prompt
   - `--steps N` sampling steps
   - `--cfg N` guidance scale
   - `--ar W:H` aspect ratio (auto-sized around 1024)
+  - `--mode txt2img|img2img|upscale`
+  - `--denoise 0.65` (img2img)
+  - `--upscale 2` (upscale)
+  - `--image input.png` (img2img/upscale source image name)
 - Optional BYOK mode: choose `OpenRouter`, `OpenAI`, or `Google Gemini` and provide your API key
 - Download generated `workflow.json`
 
@@ -30,7 +37,8 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
 
 ## Notes
 - Default checkpoint is `v1-5-pruned-emaonly.safetensors`.
-- Change this in `server.js` (`ckpt_name`) to match your installed model filename.
+- Change this in `lib/workflow.js` (`ckpt_name`) to match your installed model filename.
+- Upscale template default model is `4x-UltraSharp.pth` (also in `lib/workflow.js`).
 
 ## Vercel Deploy
 - This repo includes a Vercel serverless route at `api/generate.js`.

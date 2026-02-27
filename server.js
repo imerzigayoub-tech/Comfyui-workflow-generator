@@ -60,8 +60,9 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const payload = JSON.parse(body || "{}");
-        const workflow = buildWorkflow(payload.prompt || "");
-        sendJson(res, 200, { workflow });
+        const requestedTemplate = (payload.template || "auto").toLowerCase();
+        const { template, workflow } = buildWorkflow(payload.prompt || "", requestedTemplate);
+        sendJson(res, 200, { workflow, mode: "local-parser", template });
       } catch (error) {
         sendJson(res, 400, { error: "Invalid JSON body." });
       }
