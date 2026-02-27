@@ -215,6 +215,98 @@ function hasBrokenLinks(workflow) {
   return false;
 }
 
+function sortIds(ids) {
+  return [...ids].sort((a, b) => Number(a) - Number(b));
+}
+
+function findNodeIdsByType(workflow, type) {
+  return sortIds(Object.keys(workflow || {}).filter(id => workflow[id]?.class_type === type));
+}
+
+function pickNodeId(workflow, type, mode = "last") {
+  const ids = findNodeIdsByType(workflow, type);
+  if (!ids.length) return null;
+  return mode === "first" ? ids[0] : ids[ids.length - 1];
+}
+
+function setLinkInput(workflow, toId, inputName, fromId, outputIndex) {
+  if (!toId || !fromId) return;
+  const node = workflow[toId];
+  if (!node || !node.inputs) return;
+  node.inputs[inputName] = [String(fromId), Number(outputIndex) || 0];
+}
+
+function autoRepairLinks(workflow) {
+  const repaired = JSON.parse(JSON.stringify(workflow || {}));
+  const ids = sortIds(Object.keys(repaired));
+
+  const ckptId = pickNodeId(repaired, "CheckpointLoaderSimple");
+  const emptyLatentId = pickNodeId(repaired, "EmptyLatentImage");
+  const vaeEncodeId = pickNodeId(repaired, "VAEEncode");
+  const loadImageId = pickNodeId(repaired, "LoadImage");
+  const upscaleModelId = pickNodeId(repaired, "UpscaleModelLoader");
+  const upscaleImageId = pickNodeId(repaired, "ImageUpscaleWithModel");
+  const imageScaleId = pickNodeId(repaired, "ImageScaleBy");
+  const vaeDecodeId = pickNodeId(repaired, "VAEDecode");
+  const ksamplerId = pickNodeId(repaired, "KSampler");
+  const saveImageId = pickNodeId(repaired, "SaveImage");
+
+  const clipIds = findNodeIdsByType(repaired, "CLIPTextEncode");
+  const positiveClipId = clipIds.find(id => /positive/i.test(String(repaired[id]?._meta?.title || ""))) || clipIds[0] || null;
+  const negativeClipId = clipIds.find(id => /negative/i.test(String(repaired[id]?._meta?.title || ""))) || clipIds[1] || clipIds[0] || null;
+
+  for (const id of ids) {
+    const node = repaired[id];
+    if (!node || !node.inputs) continue;
+
+    if (node.class_type === "CLIPTextEncode") {
+      setLinkInput(repaired, id, "clip", ckptId, 1);
+    }
+
+    if (node.class_type === "KSampler") {
+      setLinkInput(repaired, id, "model", ckptId, 0);
+      setLinkInput(repaired, id, "positive", positiveClipId, 0);
+      setLinkInput(repaired, id, "negative", negativeClipId, 0);
+      setLinkInput(repaired, id, "latent_image", vaeEncodeId || emptyLatentId, 0);
+    }
+
+    if (node.class_type === "VAEEncode") {
+      setLinkInput(repaired, id, "pixels", loadImageId, 0);
+      setLinkInput(repaired, id, "vae", ckptId, 2);
+    }
+
+    if (node.class_type === "VAEDecode") {
+      setLinkInput(repaired, id, "samples", ksamplerId, 0);
+      setLinkInput(repaired, id, "vae", ckptId, 2);
+    }
+
+    if (node.class_type === "ImageUpscaleWithModel") {
+      setLinkInput(repaired, id, "image", loadImageId || vaeDecodeId, 0);
+      setLinkInput(repaired, id, "upscale_model", upscaleModelId, 0);
+    }
+
+    if (node.class_type === "ImageScaleBy") {
+      setLinkInput(repaired, id, "image", upscaleImageId || loadImageId || vaeDecodeId, 0);
+    }
+
+    if (node.class_type === "SaveImage") {
+      setLinkInput(repaired, id, "images", vaeDecodeId || imageScaleId || upscaleImageId, 0);
+    }
+  }
+
+  if (saveImageId) {
+    setLinkInput(
+      repaired,
+      saveImageId,
+      "images",
+      pickNodeId(repaired, "VAEDecode") || pickNodeId(repaired, "ImageScaleBy") || pickNodeId(repaired, "ImageUpscaleWithModel"),
+      0
+    );
+  }
+
+  return repaired;
+}
+
 async function generateWithOpenAI(prompt, apiKey) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -347,14 +439,17 @@ module.exports = async (req, res) => {
     const workflowApi = normalizeWorkflowShape(
       await generateWorkflowWithProvider(provider, prompt, apiKey, { openrouterModel })
     );
-    const workflowCandidate = validateWorkflow(
+    let workflowCandidate = validateWorkflow(
       normalizeRuntimeDefaults(normalizeWorkflowLinks(workflowApi), parsedPrompt.ckptName || DEFAULT_CKPT_NAME)
     );
     if (hasBrokenLinks(workflowCandidate)) {
-      res.status(422).json({
-        error: "Provider returned incomplete links."
-      });
-      return;
+      workflowCandidate = validateWorkflow(autoRepairLinks(workflowCandidate));
+      if (hasBrokenLinks(workflowCandidate)) {
+        res.status(422).json({
+          error: "Provider returned incomplete links and auto-repair could not resolve all required connections."
+        });
+        return;
+      }
     }
 
     const workflow = workflowCandidate;
