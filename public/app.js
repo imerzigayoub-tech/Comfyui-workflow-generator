@@ -16,8 +16,8 @@ async function generateWorkflow() {
   try {
     const apiKey = apiKeyInput.value.trim();
     const provider = providerInput.value;
-    if (!apiKey) {
-      throw new Error("API key is required.");
+    if (provider !== "ollama" && !apiKey) {
+      throw new Error("API key is required for this provider.");
     }
 
     const response = await fetch("/api/generate", {

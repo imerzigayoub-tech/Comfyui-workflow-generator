@@ -1,15 +1,16 @@
 ﻿# ComfyUI Workflow Generator
 
-Web app that converts a text prompt into a ComfyUI workflow JSON using your provider API key (BYOK).
+Web app that converts a text prompt into a ComfyUI workflow JSON using provider APIs (BYOK) or local Ollama.
 
 ## Features
-- Prompt-only workflow generation via BYOK provider API (`OpenRouter`, `OpenAI`, `Google`)
+- Prompt-only workflow generation via providers (`OpenRouter`, `OpenAI`, `Google`, `Ollama`)
 - Workflow topology is generated from your prompt intent (no template selector)
 - Pipeline is: provider API -> `workflow_api` -> UI conversion/validation
 - Optional inline controls in prompt:
   - `--ckpt your_model.safetensors`
 - BYOK mode: choose `OpenRouter`, `OpenAI`, or `Google Gemini` and provide your API key
   - Provider generates a full ComfyUI workflow JSON from the prompt
+- Free local mode: choose `Ollama` (no cloud API key required)
 - Download generated `workflow.json`
   - Download now exports node-based `workflow-ui.json` for ComfyUI canvas import
 
@@ -43,5 +44,16 @@ Note: generation is BYOK-only. Local `server.js` serves the frontend only.
 ## Vercel Deploy
 - This repo includes a Vercel serverless route at `api/generate.js`.
 - Frontend calls `/api/generate` and works on Vercel without running `server.js`.
-- Provider selection is sent from the UI (`openrouter`, `openai`, `google`).
+- Provider selection is sent from the UI (`openrouter`, `openai`, `google`, `ollama`).
+
+## Ollama Setup
+1. Install Ollama and pull a model, for example:
+   ```powershell
+   ollama pull llama3.1:8b
+   ```
+2. Ensure Ollama is running on `http://127.0.0.1:11434`.
+3. In this app choose provider `Ollama`.
+4. Optional env vars:
+   - `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`)
+   - `OLLAMA_MODEL` (default `llama3.1:8b`)
 

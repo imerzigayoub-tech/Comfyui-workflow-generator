@@ -1,5 +1,7 @@
 const { apiWorkflowToUiWorkflow } = require("../lib/workflow");
 const DEFAULT_OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini";
+const DEFAULT_OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434";
+const DEFAULT_OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3.1:8b";
 const REQUEST_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 120000);
 const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 1200);
 
@@ -209,9 +211,36 @@ async function generateWithGoogle(prompt, apiKey) {
   return extractJsonObject(data.candidates?.[0]?.content?.parts?.[0]?.text || "");
 }
 
+async function generateWithOllama(prompt, options = {}) {
+  const baseUrl = String(options.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL).replace(/\/+$/, "");
+  const model = options.ollamaModel || DEFAULT_OLLAMA_MODEL;
+  const response = await fetchWithTimeout(`${baseUrl}/api/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model,
+      prompt: `${workflowSystemPrompt()}\n\nUser prompt:\n${prompt || ""}`,
+      format: "json",
+      stream: false,
+      options: {
+        temperature: 0.2
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`BYOK request failed (${response.status}): ${body.slice(0, 300)}`);
+  }
+
+  const data = await response.json();
+  return extractJsonObject(data.response || "");
+}
+
 async function generateWithProvider(provider, prompt, apiKey, options = {}) {
   if (provider === "openai") return generateWithOpenAI(prompt, apiKey);
   if (provider === "google") return generateWithGoogle(prompt, apiKey);
+  if (provider === "ollama") return generateWithOllama(prompt, options);
   return generateWithOpenRouter(prompt, apiKey, options.openrouterModel || DEFAULT_OPENROUTER_MODEL);
 }
 
@@ -226,6 +255,8 @@ module.exports = async (req, res) => {
     const prompt = body.prompt || "";
     const provider = (body.provider || "openrouter").toLowerCase();
     const openrouterModel = body.openrouterModel || DEFAULT_OPENROUTER_MODEL;
+    const ollamaModel = body.ollamaModel || DEFAULT_OLLAMA_MODEL;
+    const ollamaBaseUrl = body.ollamaBaseUrl || DEFAULT_OLLAMA_BASE_URL;
     const apiKey =
       body.apiKey ||
       req.headers["x-openrouter-api-key"] ||
@@ -233,17 +264,17 @@ module.exports = async (req, res) => {
       req.headers["x-google-api-key"] ||
       "";
 
-    if (!apiKey) {
+    if (provider !== "ollama" && !apiKey) {
       res.status(400).json({ error: "API key is required. Provide a key and choose openrouter, openai, or google." });
       return;
     }
 
     if (provider === "local") {
-      res.status(400).json({ error: "provider=local is disabled. Use openrouter, openai, or google." });
+      res.status(400).json({ error: "provider=local is disabled. Use openrouter, openai, google, or ollama." });
       return;
     }
 
-    const result = await generateWithProvider(provider, prompt, apiKey, { openrouterModel });
+    const result = await generateWithProvider(provider, prompt, apiKey, { openrouterModel, ollamaModel, ollamaBaseUrl });
     const workflowApi = validateWorkflowApi(result.workflow_api || result.workflow || result);
     const workflowUi = validateWorkflowUi(apiWorkflowToUiWorkflow(workflowApi));
 
