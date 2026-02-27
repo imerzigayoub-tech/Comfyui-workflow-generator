@@ -33,7 +33,14 @@ async function generateWorkflow() {
     });
 
     if (!response.ok) {
-      throw new Error(`Request failed (${response.status})`);
+      let details = "";
+      try {
+        const err = await response.json();
+        details = err.error ? `: ${err.error}` : "";
+      } catch (e) {
+        // ignore parsing failure, keep generic error
+      }
+      throw new Error(`Request failed (${response.status})${details}`);
     }
 
     const data = await response.json();

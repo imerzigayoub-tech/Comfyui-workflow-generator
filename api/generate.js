@@ -240,15 +240,17 @@ async function generateWithOpenAI(prompt, apiKey) {
   return validateWorkflow(extractJsonObject(data.output_text || ""));
 }
 
-async function generateWithOpenRouter(prompt, apiKey) {
+async function generateWithOpenRouter(prompt, apiKey, model = process.env.OPENROUTER_MODEL || "openrouter/auto") {
   const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
+      "Content-Type": "application/json",
+      "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost",
+      "X-Title": process.env.OPENROUTER_APP_NAME || "ComfyUI Workflow Generator"
     },
     body: JSON.stringify({
-      model: "openai/gpt-4o-mini",
+      model,
       messages: [
         { role: "system", content: workflowSystemPrompt() },
         { role: "user", content: prompt || "" }
@@ -299,14 +301,14 @@ async function generateWithGoogle(prompt, apiKey) {
   return validateWorkflow(extractJsonObject(text));
 }
 
-async function generateWorkflowWithProvider(provider, prompt, apiKey) {
+async function generateWorkflowWithProvider(provider, prompt, apiKey, options = {}) {
   if (provider === "openai") {
     return generateWithOpenAI(prompt, apiKey);
   }
   if (provider === "google") {
     return generateWithGoogle(prompt, apiKey);
   }
-  return generateWithOpenRouter(prompt, apiKey);
+  return generateWithOpenRouter(prompt, apiKey, options.openrouterModel);
 }
 
 module.exports = async (req, res) => {
@@ -320,6 +322,7 @@ module.exports = async (req, res) => {
     const prompt = body.prompt || "";
     const provider = (body.provider || "openrouter").toLowerCase();
     const requestedTemplate = (body.template || "auto").toLowerCase();
+    const openrouterModel = body.openrouterModel || process.env.OPENROUTER_MODEL || "openrouter/auto";
     const apiKey =
       body.apiKey ||
       req.headers["x-openrouter-api-key"] ||
@@ -336,7 +339,9 @@ module.exports = async (req, res) => {
 
     if (apiKey && provider !== "local") {
       const parsedPrompt = parseArgs(prompt);
-      const workflowApi = normalizeWorkflowShape(await generateWorkflowWithProvider(provider, prompt, apiKey));
+      const workflowApi = normalizeWorkflowShape(
+        await generateWorkflowWithProvider(provider, prompt, apiKey, { openrouterModel })
+      );
       const workflowCandidate = validateWorkflow(
         normalizeRuntimeDefaults(normalizeWorkflowLinks(workflowApi), parsedPrompt.ckptName || DEFAULT_CKPT_NAME)
       );
