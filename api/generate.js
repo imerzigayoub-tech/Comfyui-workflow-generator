@@ -1,11 +1,29 @@
 const { parseArgs, apiWorkflowToUiWorkflow } = require("../lib/workflow");
 const DEFAULT_CKPT_NAME = process.env.DEFAULT_CKPT_NAME || "sd_xl_base_1.0.safetensors";
 const SCHEDULERS = new Set(["simple", "sgm_uniform", "karras", "exponential", "ddim_uniform", "beta", "normal", "linear_quadratic", "kl_optimal"]);
+const DEFAULT_OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini";
+const REQUEST_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 25000);
+const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 2600);
 
 function normalizeApiKey(raw) {
   const value = String(raw || "").trim();
   if (!value) return "";
   return value.replace(/^Bearer\s+/i, "").trim();
+}
+
+async function fetchWithTimeout(url, options, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (error && error.name === "AbortError") {
+      throw new Error(`Provider request timed out after ${timeoutMs}ms.`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function extractJsonObject(text) {
@@ -311,7 +329,7 @@ function autoRepairLinks(workflow) {
 
 async function generateWithOpenAI(prompt, apiKey) {
   const normalizedKey = normalizeApiKey(apiKey);
-  const response = await fetch("https://api.openai.com/v1/responses", {
+  const response = await fetchWithTimeout("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${normalizedKey}`,
@@ -319,6 +337,7 @@ async function generateWithOpenAI(prompt, apiKey) {
     },
     body: JSON.stringify({
       model: "gpt-4.1-mini",
+      max_output_tokens: LLM_MAX_TOKENS,
       input: [
         { role: "system", content: workflowSystemPrompt() },
         { role: "user", content: prompt || "" }
@@ -335,9 +354,9 @@ async function generateWithOpenAI(prompt, apiKey) {
   return validateWorkflow(extractJsonObject(data.output_text || ""));
 }
 
-async function generateWithOpenRouter(prompt, apiKey, model = process.env.OPENROUTER_MODEL || "openrouter/auto") {
+async function generateWithOpenRouter(prompt, apiKey, model = DEFAULT_OPENROUTER_MODEL) {
   const normalizedKey = normalizeApiKey(apiKey);
-  const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+  const response = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${normalizedKey}`,
@@ -352,7 +371,9 @@ async function generateWithOpenRouter(prompt, apiKey, model = process.env.OPENRO
         { role: "system", content: workflowSystemPrompt() },
         { role: "user", content: prompt || "" }
       ],
-      temperature: 0.3
+      temperature: 0.2,
+      max_tokens: LLM_MAX_TOKENS,
+      response_format: { type: "json_object" }
     })
   });
 
@@ -368,13 +389,13 @@ async function generateWithOpenRouter(prompt, apiKey, model = process.env.OPENRO
 
 async function generateWithGoogle(prompt, apiKey) {
   const normalizedKey = normalizeApiKey(apiKey);
-  const response = await fetch(
+  const response = await fetchWithTimeout(
     `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${encodeURIComponent(normalizedKey)}`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        generationConfig: { temperature: 0.3 },
+        generationConfig: { temperature: 0.2, maxOutputTokens: LLM_MAX_TOKENS },
         contents: [
           {
             role: "user",
@@ -419,7 +440,7 @@ module.exports = async (req, res) => {
     const body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
     const prompt = body.prompt || "";
     const provider = (body.provider || "openrouter").toLowerCase();
-    const openrouterModel = body.openrouterModel || process.env.OPENROUTER_MODEL || "openrouter/auto";
+    const openrouterModel = body.openrouterModel || DEFAULT_OPENROUTER_MODEL;
     const apiKey =
       body.apiKey ||
       req.headers["x-openrouter-api-key"] ||
@@ -462,6 +483,11 @@ module.exports = async (req, res) => {
     const workflowUi = apiWorkflowToUiWorkflow(workflow);
     res.status(200).json({ workflow, workflowUi, mode: "byok-generated", provider, template: "llm-generated" });
   } catch (error) {
-    res.status(400).json({ error: error.message || "Invalid request body." });
+    const message = error.message || "Invalid request body.";
+    if (/timed out/i.test(message)) {
+      res.status(504).json({ error: message });
+      return;
+    }
+    res.status(400).json({ error: message });
   }
 };
