@@ -1,4 +1,6 @@
 const { buildWorkflow, parseArgs, resolveTemplate, apiWorkflowToUiWorkflow } = require("../lib/workflow");
+const DEFAULT_CKPT_NAME = process.env.DEFAULT_CKPT_NAME || "sd_xl_base_1.0.safetensors";
+const SCHEDULERS = new Set(["simple", "sgm_uniform", "karras", "exponential", "ddim_uniform", "beta", "normal", "linear_quadratic", "kl_optimal"]);
 
 function extractJsonObject(text) {
   if (!text) {
@@ -123,6 +125,50 @@ function normalizeWorkflowLinks(workflow) {
     };
   }
   return normalized;
+}
+
+function normalizeRuntimeDefaults(workflow, preferredCkptName) {
+  const output = {};
+  for (const [id, node] of Object.entries(workflow || {})) {
+    const inputs = { ...(node.inputs || {}) };
+
+    if (node.class_type === "CheckpointLoaderSimple") {
+      inputs.ckpt_name = preferredCkptName || inputs.ckpt_name || DEFAULT_CKPT_NAME;
+    }
+
+    if (node.class_type === "KSampler") {
+      const cfgNum = Number(inputs.cfg);
+      const denoiseNum = Number(inputs.denoise);
+      const stepsNum = Number(inputs.steps);
+      const seedNum = Number(inputs.seed);
+
+      if (!Number.isFinite(seedNum)) inputs.seed = Math.floor(Math.random() * 2147483647);
+      if (!Number.isFinite(stepsNum)) inputs.steps = 30;
+      if (!Number.isFinite(cfgNum)) inputs.cfg = 7;
+      if (!Number.isFinite(denoiseNum)) inputs.denoise = 1;
+
+      const samplerName = String(inputs.sampler_name || "").trim();
+      const schedulerName = String(inputs.scheduler || "").trim();
+
+      if (!SCHEDULERS.has(schedulerName) && SCHEDULERS.has(samplerName)) {
+        inputs.scheduler = samplerName;
+        inputs.sampler_name = "euler";
+      } else {
+        if (!SCHEDULERS.has(schedulerName)) inputs.scheduler = "normal";
+        if (!samplerName || SCHEDULERS.has(samplerName)) inputs.sampler_name = "euler";
+      }
+
+      if (!inputs.control_after_generate) {
+        inputs.control_after_generate = "randomize";
+      }
+    }
+
+    output[String(id)] = {
+      ...node,
+      inputs
+    };
+  }
+  return output;
 }
 
 const REQUIRED_LINK_INPUTS = {
@@ -282,8 +328,11 @@ module.exports = async (req, res) => {
       "";
 
     if (apiKey && provider !== "local") {
+      const parsedPrompt = parseArgs(prompt);
       const workflowApi = normalizeWorkflowShape(await generateWorkflowWithProvider(provider, prompt, apiKey));
-      const workflowCandidate = validateWorkflow(normalizeWorkflowLinks(workflowApi));
+      const workflowCandidate = validateWorkflow(
+        normalizeRuntimeDefaults(normalizeWorkflowLinks(workflowApi), parsedPrompt.ckptName || DEFAULT_CKPT_NAME)
+      );
       if (hasBrokenLinks(workflowCandidate)) {
         const { template, workflow } = buildWorkflow(prompt, requestedTemplate);
         const workflowUi = apiWorkflowToUiWorkflow(workflow);

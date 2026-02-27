@@ -15,6 +15,7 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
   - `--cfg N` guidance scale
   - `--ar W:H` aspect ratio (auto-sized around 1024)
   - `--mode txt2img|img2img|upscale`
+  - `--ckpt your_model.safetensors`
   - `--denoise 0.65` (img2img)
   - `--upscale 2` (upscale)
   - `--image input.png` (img2img/upscale source image name)
@@ -40,8 +41,8 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
 2. In ComfyUI, use workflow load/import and select that file.
 
 ## Notes
-- Default checkpoint is `v1-5-pruned-emaonly.safetensors`.
-- Change this in `lib/workflow.js` (`ckpt_name`) to match your installed model filename.
+- Default checkpoint is `sd_xl_base_1.0.safetensors`.
+- Override per prompt with `--ckpt ...` or globally with env var `DEFAULT_CKPT_NAME`.
 - Upscale template default model is `4x-UltraSharp.pth` (also in `lib/workflow.js`).
 
 ## Vercel Deploy
