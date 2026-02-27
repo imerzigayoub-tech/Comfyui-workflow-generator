@@ -43,6 +43,42 @@ function extractJsonObject(text) {
   return JSON.parse(text.slice(start, end + 1));
 }
 
+function validateWorkflow(workflow) {
+  if (!workflow || typeof workflow !== "object" || Array.isArray(workflow)) {
+    throw new Error("Generated workflow is not an object.");
+  }
+
+  const nodeIds = Object.keys(workflow);
+  if (nodeIds.length < 3) {
+    throw new Error("Generated workflow has too few nodes.");
+  }
+
+  let linkRefCount = 0;
+  for (const id of nodeIds) {
+    const node = workflow[id];
+    if (!node || typeof node !== "object") {
+      throw new Error(`Invalid node at id ${id}.`);
+    }
+    if (!node.class_type || typeof node.class_type !== "string") {
+      throw new Error(`Node ${id} missing class_type.`);
+    }
+    if (!node.inputs || typeof node.inputs !== "object") {
+      throw new Error(`Node ${id} missing inputs.`);
+    }
+    for (const value of Object.values(node.inputs || {})) {
+      if (Array.isArray(value) && value.length === 2) {
+        linkRefCount += 1;
+      }
+    }
+  }
+
+  if (linkRefCount === 0) {
+    throw new Error("Generated workflow has no links between nodes.");
+  }
+
+  return workflow;
+}
+
 function workflowSystemPrompt() {
   return [
     "You are generating a ComfyUI workflow draft from the user prompt.",
