@@ -1,9 +1,12 @@
-const { parseArgs, apiWorkflowToUiWorkflow } = require("../lib/workflow");
+const { apiWorkflowToUiWorkflow } = require("../lib/workflow");
+
 const DEFAULT_CKPT_NAME = process.env.DEFAULT_CKPT_NAME || "sd_xl_base_1.0.safetensors";
-const SCHEDULERS = new Set(["simple", "sgm_uniform", "karras", "exponential", "ddim_uniform", "beta", "normal", "linear_quadratic", "kl_optimal"]);
 const DEFAULT_OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini";
 const REQUEST_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 25000);
 const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 2600);
+
+const SCHEDULERS = new Set(["simple", "sgm_uniform", "karras", "exponential", "ddim_uniform", "beta", "normal", "linear_quadratic", "kl_optimal"]);
+const DEFAULT_NEG = "blurry, low quality, artifacts, deformed";
 
 function normalizeApiKey(raw) {
   const value = String(raw || "").trim();
@@ -40,111 +43,236 @@ function extractJsonObject(text) {
   return JSON.parse(text.slice(start, end + 1));
 }
 
-function validateWorkflow(workflow) {
-  if (!workflow || typeof workflow !== "object" || Array.isArray(workflow)) {
-    throw new Error("Generated workflow is not an object.");
-  }
-
-  const nodeIds = Object.keys(workflow);
-  if (nodeIds.length < 3) {
-    throw new Error("Generated workflow has too few nodes.");
-  }
-
-  for (const id of nodeIds) {
-    const node = workflow[id];
-    if (!node || typeof node !== "object") {
-      throw new Error(`Invalid node at id ${id}.`);
-    }
-    if (!node.class_type || typeof node.class_type !== "string") {
-      throw new Error(`Node ${id} missing class_type.`);
-    }
-    if (!node.inputs || typeof node.inputs !== "object") {
-      throw new Error(`Node ${id} missing inputs.`);
-    }
-  }
-
-  let linkRefCount = 0;
-  for (const id of nodeIds) {
-    const node = workflow[id];
-    for (const value of Object.values(node.inputs || {})) {
-      if (Array.isArray(value) && value.length === 2) {
-        linkRefCount += 1;
-      }
-    }
-  }
-
-  if (linkRefCount === 0) {
-    throw new Error("Generated workflow has no links between nodes.");
-  }
-
-  return workflow;
-}
-
-function normalizeWorkflowShape(candidate) {
-  if (
-    candidate &&
-    typeof candidate === "object" &&
-    !Array.isArray(candidate) &&
-    candidate.workflow &&
-    typeof candidate.workflow === "object" &&
-    !Array.isArray(candidate.workflow)
-  ) {
-    return candidate.workflow;
-  }
-  return candidate;
-}
-
 function workflowSystemPrompt() {
   return [
-    "You generate ComfyUI workflow JSON directly from the user's request.",
-    "Return ONLY one JSON object (no markdown, no explanation).",
-    "The object MUST be a valid ComfyUI API workflow graph where keys are node ids as strings.",
-    "Each node must include: class_type, inputs, _meta.title.",
-    "Linked inputs MUST use this exact format: [\"<node_id>\", <output_index>].",
-    "Build topology according to user intent, not from a fixed template.",
-    "If the user asks for specific operations (img2img, upscale, controlnet, inpaint, LoRA, IPAdapter, etc.), include corresponding nodes.",
-    "If uncertain, build the smallest runnable graph for the described goal.",
-    "Use realistic values and keep all required links connected.",
-    "Output strictly JSON only."
+    "You are generating a ComfyUI workflow draft from the user prompt.",
+    "Return JSON only.",
+    "Preferred output format:",
+    "{ intent, prompt, negativePrompt, steps, cfg, width, height, denoise, sourceImage, upscaleFactor, ckpt_name, workflow? }",
+    "intent should be one of: txt2img, txt2img_refine, img2img, upscale.",
+    "workflow is optional draft graph; if provided use ComfyUI-style node object keys.",
+    "If unsure, still provide intent and core generation params.",
+    "No markdown." 
   ].join(" ");
 }
 
-function normalizeLinkValue(value) {
-  if (Array.isArray(value) && value.length === 2) {
-    return [String(value[0]), Number(value[1]) || 0];
-  }
-
-  if (value && typeof value === "object") {
-    const nodeId = value.node ?? value.node_id ?? value.id ?? value.from;
-    const slot = value.output ?? value.slot ?? value.index ?? value.out;
-    if (nodeId !== undefined && slot !== undefined) {
-      return [String(nodeId), Number(slot) || 0];
-    }
-  }
-
-  if (typeof value === "string") {
-    const match = value.match(/^\s*(\d+)\s*[:|,]\s*(\d+)\s*$/);
-    if (match) {
-      return [match[1], Number(match[2]) || 0];
-    }
-  }
-
-  return value;
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
-function normalizeWorkflowLinks(workflow) {
-  const normalized = {};
-  for (const [id, node] of Object.entries(workflow || {})) {
-    const inputs = {};
-    for (const [name, value] of Object.entries(node.inputs || {})) {
-      inputs[name] = normalizeLinkValue(value);
+function parsePromptHints(prompt) {
+  const raw = String(prompt || "").trim();
+
+  const ckptMatch = raw.match(/--ckpt\s+([^\n]+?)(?=\s--|$)/i);
+  const negMatch = raw.match(/--neg\s+([^\n]+?)(?=\s--|$)/i);
+  const stepsMatch = raw.match(/--steps\s+(\d{1,3})/i);
+  const cfgMatch = raw.match(/--cfg\s+([0-9]+(?:\.[0-9]+)?)/i);
+  const denoiseMatch = raw.match(/--denoise\s+([0-9]+(?:\.[0-9]+)?)/i);
+  const upscaleMatch = raw.match(/--upscale\s+([0-9]+(?:\.[0-9]+)?)/i);
+  const imageMatch = raw.match(/--image\s+([^\n]+?)(?=\s--|$)/i);
+  const arMatch = raw.match(/--ar\s+(\d+)\s*:\s*(\d+)/i);
+
+  let cleanPrompt = raw
+    .replace(/--ckpt\s+([^\n]+?)(?=\s--|$)/gi, "")
+    .replace(/--neg\s+([^\n]+?)(?=\s--|$)/gi, "")
+    .replace(/--steps\s+\d{1,3}/gi, "")
+    .replace(/--cfg\s+[0-9]+(?:\.[0-9]+)?/gi, "")
+    .replace(/--denoise\s+[0-9]+(?:\.[0-9]+)?/gi, "")
+    .replace(/--upscale\s+[0-9]+(?:\.[0-9]+)?/gi, "")
+    .replace(/--image\s+([^\n]+?)(?=\s--|$)/gi, "")
+    .replace(/--ar\s+\d+\s*:\s*\d+/gi, "")
+    .trim();
+
+  if (!cleanPrompt) cleanPrompt = "masterpiece, detailed, cinematic lighting";
+
+  let width = 1024;
+  let height = 1024;
+  if (arMatch) {
+    const w = Number(arMatch[1]);
+    const h = Number(arMatch[2]);
+    if (w > 0 && h > 0) {
+      const base = 1024;
+      if (w >= h) {
+        width = base;
+        height = Math.round((base * h) / w / 64) * 64;
+      } else {
+        height = base;
+        width = Math.round((base * w) / h / 64) * 64;
+      }
+      width = Math.max(512, width);
+      height = Math.max(512, height);
     }
-    normalized[String(id)] = {
-      ...node,
-      inputs
-    };
   }
-  return normalized;
+
+  return {
+    prompt: cleanPrompt,
+    negativePrompt: negMatch ? negMatch[1].trim() : DEFAULT_NEG,
+    steps: stepsMatch ? clamp(Number(stepsMatch[1]), 1, 80) : 30,
+    cfg: cfgMatch ? clamp(Number(cfgMatch[1]), 1, 20) : 7,
+    denoise: denoiseMatch ? clamp(Number(denoiseMatch[1]), 0.05, 1) : 0.65,
+    width,
+    height,
+    sourceImage: imageMatch ? imageMatch[1].trim() : "input.png",
+    upscaleFactor: upscaleMatch ? clamp(Number(upscaleMatch[1]), 1.5, 4) : 2,
+    ckptName: ckptMatch ? ckptMatch[1].trim() : DEFAULT_CKPT_NAME
+  };
+}
+
+function detectIntent(prompt, draft) {
+  const text = String(prompt || "").toLowerCase();
+  const draftIntent = String(draft?.intent || "").toLowerCase();
+  if (["txt2img", "txt2img_refine", "img2img", "upscale"].includes(draftIntent)) {
+    return draftIntent;
+  }
+
+  const draftWorkflow = draft?.workflow && typeof draft.workflow === "object" ? draft.workflow : draft;
+  if (draftWorkflow && typeof draftWorkflow === "object") {
+    const nodeTypes = new Set(Object.values(draftWorkflow).map(node => node?.class_type));
+    if (nodeTypes.has("UpscaleModelLoader") || nodeTypes.has("ImageUpscaleWithModel")) return "upscale";
+    if (nodeTypes.has("LoadImage") || nodeTypes.has("VAEEncode")) return "img2img";
+  }
+
+  if (text.includes("upscale") || text.includes("super resolution") || text.includes("enhance")) return "upscale";
+  if (text.includes("img2img") || text.includes("restyle") || text.includes("edit") || text.includes("variation") || text.includes("inpaint")) return "img2img";
+  if (text.includes("refine") || text.includes("hires") || text.includes("2 pass") || text.includes("two pass")) return "txt2img_refine";
+  return "txt2img";
+}
+
+function readFirstNodeInput(workflow, classType, inputName) {
+  if (!workflow || typeof workflow !== "object") return undefined;
+  const ids = Object.keys(workflow).sort((a, b) => Number(a) - Number(b));
+  for (const id of ids) {
+    const node = workflow[id];
+    if (node?.class_type === classType && node.inputs && node.inputs[inputName] !== undefined) {
+      return node.inputs[inputName];
+    }
+  }
+  return undefined;
+}
+
+function compileTxt2Img(params, refine = false) {
+  const base = {
+    "1": { inputs: { ckpt_name: params.ckptName }, class_type: "CheckpointLoaderSimple", _meta: { title: "Load Checkpoint" } },
+    "2": { inputs: { text: params.prompt, clip: ["1", 1] }, class_type: "CLIPTextEncode", _meta: { title: "Positive Prompt" } },
+    "3": { inputs: { text: params.negativePrompt, clip: ["1", 1] }, class_type: "CLIPTextEncode", _meta: { title: "Negative Prompt" } },
+    "4": { inputs: { width: params.width, height: params.height, batch_size: 1 }, class_type: "EmptyLatentImage", _meta: { title: "Empty Latent" } },
+    "5": {
+      inputs: {
+        seed: Math.floor(Math.random() * 2147483647),
+        control_after_generate: "randomize",
+        steps: params.steps,
+        cfg: params.cfg,
+        sampler_name: "euler",
+        scheduler: "normal",
+        denoise: 1,
+        model: ["1", 0],
+        positive: ["2", 0],
+        negative: ["3", 0],
+        latent_image: ["4", 0]
+      },
+      class_type: "KSampler",
+      _meta: { title: "KSampler" }
+    }
+  };
+
+  if (!refine) {
+    base["6"] = { inputs: { samples: ["5", 0], vae: ["1", 2] }, class_type: "VAEDecode", _meta: { title: "VAE Decode" } };
+    base["7"] = { inputs: { filename_prefix: "ComfyUI_BYOK_Txt2Img", images: ["6", 0] }, class_type: "SaveImage", _meta: { title: "Save Image" } };
+    return base;
+  }
+
+  base["6"] = { inputs: { samples: ["5", 0], vae: ["1", 2] }, class_type: "VAEDecode", _meta: { title: "Decode Base" } };
+  base["7"] = { inputs: { pixels: ["6", 0], vae: ["1", 2] }, class_type: "VAEEncode", _meta: { title: "Re-Encode" } };
+  base["8"] = {
+    inputs: {
+      seed: Math.floor(Math.random() * 2147483647),
+      control_after_generate: "randomize",
+      steps: Math.max(10, Math.round(params.steps * 0.45)),
+      cfg: Math.max(4, params.cfg - 1),
+      sampler_name: "euler",
+      scheduler: "normal",
+      denoise: 0.35,
+      model: ["1", 0],
+      positive: ["2", 0],
+      negative: ["3", 0],
+      latent_image: ["7", 0]
+    },
+    class_type: "KSampler",
+    _meta: { title: "Refine KSampler" }
+  };
+  base["9"] = { inputs: { samples: ["8", 0], vae: ["1", 2] }, class_type: "VAEDecode", _meta: { title: "Decode Refined" } };
+  base["10"] = { inputs: { filename_prefix: "ComfyUI_BYOK_Txt2Img_Refine", images: ["9", 0] }, class_type: "SaveImage", _meta: { title: "Save Image" } };
+  return base;
+}
+
+function compileImg2Img(params) {
+  return {
+    "1": { inputs: { ckpt_name: params.ckptName }, class_type: "CheckpointLoaderSimple", _meta: { title: "Load Checkpoint" } },
+    "2": { inputs: { image: params.sourceImage, upload: "image" }, class_type: "LoadImage", _meta: { title: "Load Image" } },
+    "3": { inputs: { pixels: ["2", 0], vae: ["1", 2] }, class_type: "VAEEncode", _meta: { title: "VAE Encode" } },
+    "4": { inputs: { text: params.prompt, clip: ["1", 1] }, class_type: "CLIPTextEncode", _meta: { title: "Positive Prompt" } },
+    "5": { inputs: { text: params.negativePrompt, clip: ["1", 1] }, class_type: "CLIPTextEncode", _meta: { title: "Negative Prompt" } },
+    "6": {
+      inputs: {
+        seed: Math.floor(Math.random() * 2147483647),
+        control_after_generate: "randomize",
+        steps: params.steps,
+        cfg: params.cfg,
+        sampler_name: "euler",
+        scheduler: "normal",
+        denoise: params.denoise,
+        model: ["1", 0],
+        positive: ["4", 0],
+        negative: ["5", 0],
+        latent_image: ["3", 0]
+      },
+      class_type: "KSampler",
+      _meta: { title: "KSampler" }
+    },
+    "7": { inputs: { samples: ["6", 0], vae: ["1", 2] }, class_type: "VAEDecode", _meta: { title: "VAE Decode" } },
+    "8": { inputs: { filename_prefix: "ComfyUI_BYOK_Img2Img", images: ["7", 0] }, class_type: "SaveImage", _meta: { title: "Save Image" } }
+  };
+}
+
+function compileUpscale(params) {
+  return {
+    "1": { inputs: { image: params.sourceImage, upload: "image" }, class_type: "LoadImage", _meta: { title: "Load Image" } },
+    "2": { inputs: { model_name: "4x-UltraSharp.pth" }, class_type: "UpscaleModelLoader", _meta: { title: "Load Upscale Model" } },
+    "3": { inputs: { image: ["1", 0], upscale_model: ["2", 0] }, class_type: "ImageUpscaleWithModel", _meta: { title: "AI Upscale" } },
+    "4": { inputs: { image: ["3", 0], upscale_method: "bicubic", scale_by: params.upscaleFactor }, class_type: "ImageScaleBy", _meta: { title: "Scale Image" } },
+    "5": { inputs: { filename_prefix: "ComfyUI_BYOK_Upscale", images: ["4", 0] }, class_type: "SaveImage", _meta: { title: "Save Image" } }
+  };
+}
+
+function compileWorkflowFromPromptAndDraft(prompt, draftObject) {
+  const hints = parsePromptHints(prompt);
+  const draftWorkflow = draftObject?.workflow && typeof draftObject.workflow === "object" ? draftObject.workflow : draftObject;
+
+  const merged = {
+    ...hints,
+    prompt: String(draftObject?.prompt || readFirstNodeInput(draftWorkflow, "CLIPTextEncode", "text") || hints.prompt),
+    negativePrompt: String(draftObject?.negativePrompt || hints.negativePrompt),
+    steps: clamp(Number(draftObject?.steps || readFirstNodeInput(draftWorkflow, "KSampler", "steps") || hints.steps), 1, 80),
+    cfg: clamp(Number(draftObject?.cfg || readFirstNodeInput(draftWorkflow, "KSampler", "cfg") || hints.cfg), 1, 20),
+    denoise: clamp(Number(draftObject?.denoise || readFirstNodeInput(draftWorkflow, "KSampler", "denoise") || hints.denoise), 0.05, 1),
+    width: clamp(Number(draftObject?.width || hints.width), 512, 1536),
+    height: clamp(Number(draftObject?.height || hints.height), 512, 1536),
+    upscaleFactor: clamp(Number(draftObject?.upscaleFactor || hints.upscaleFactor), 1.5, 4),
+    sourceImage: String(draftObject?.sourceImage || hints.sourceImage),
+    ckptName: String(draftObject?.ckpt_name || hints.ckptName)
+  };
+
+  const intent = detectIntent(prompt, draftObject);
+  if (intent === "upscale") {
+    return { intent, workflow: compileUpscale(merged) };
+  }
+  if (intent === "img2img") {
+    return { intent, workflow: compileImg2Img(merged) };
+  }
+  if (intent === "txt2img_refine") {
+    return { intent, workflow: compileTxt2Img(merged, true) };
+  }
+  return { intent: "txt2img", workflow: compileTxt2Img(merged, false) };
 }
 
 function normalizeRuntimeDefaults(workflow, preferredCkptName) {
@@ -191,142 +319,6 @@ function normalizeRuntimeDefaults(workflow, preferredCkptName) {
   return output;
 }
 
-const REQUIRED_LINK_INPUTS = {
-  CLIPTextEncode: ["clip"],
-  KSampler: ["model", "positive", "negative", "latent_image"],
-  VAEDecode: ["samples", "vae"],
-  SaveImage: ["images"],
-  VAEEncode: ["pixels", "vae"],
-  ImageUpscaleWithModel: ["image", "upscale_model"],
-  ImageScaleBy: ["image"]
-};
-
-function isValidLinkRef(value, nodeIdsSet) {
-  if (!(Array.isArray(value) && value.length === 2)) {
-    return false;
-  }
-  const fromId = String(value[0]);
-  const slot = Number(value[1]);
-  return nodeIdsSet.has(fromId) && Number.isFinite(slot) && slot >= 0;
-}
-
-function hasBrokenLinks(workflow) {
-  const nodeIds = Object.keys(workflow || {});
-  const nodeIdsSet = new Set(nodeIds);
-
-  for (const id of nodeIds) {
-    const node = workflow[id];
-    const inputs = node.inputs || {};
-
-    for (const value of Object.values(inputs)) {
-      if (Array.isArray(value) && !isValidLinkRef(value, nodeIdsSet)) {
-        return true;
-      }
-    }
-
-    const required = REQUIRED_LINK_INPUTS[node.class_type] || [];
-    for (const inputName of required) {
-      if (!isValidLinkRef(inputs[inputName], nodeIdsSet)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-function sortIds(ids) {
-  return [...ids].sort((a, b) => Number(a) - Number(b));
-}
-
-function findNodeIdsByType(workflow, type) {
-  return sortIds(Object.keys(workflow || {}).filter(id => workflow[id]?.class_type === type));
-}
-
-function pickNodeId(workflow, type, mode = "last") {
-  const ids = findNodeIdsByType(workflow, type);
-  if (!ids.length) return null;
-  return mode === "first" ? ids[0] : ids[ids.length - 1];
-}
-
-function setLinkInput(workflow, toId, inputName, fromId, outputIndex) {
-  if (!toId || !fromId) return;
-  const node = workflow[toId];
-  if (!node || !node.inputs) return;
-  node.inputs[inputName] = [String(fromId), Number(outputIndex) || 0];
-}
-
-function autoRepairLinks(workflow) {
-  const repaired = JSON.parse(JSON.stringify(workflow || {}));
-  const ids = sortIds(Object.keys(repaired));
-
-  const ckptId = pickNodeId(repaired, "CheckpointLoaderSimple");
-  const emptyLatentId = pickNodeId(repaired, "EmptyLatentImage");
-  const vaeEncodeId = pickNodeId(repaired, "VAEEncode");
-  const loadImageId = pickNodeId(repaired, "LoadImage");
-  const upscaleModelId = pickNodeId(repaired, "UpscaleModelLoader");
-  const upscaleImageId = pickNodeId(repaired, "ImageUpscaleWithModel");
-  const imageScaleId = pickNodeId(repaired, "ImageScaleBy");
-  const vaeDecodeId = pickNodeId(repaired, "VAEDecode");
-  const ksamplerId = pickNodeId(repaired, "KSampler");
-  const saveImageId = pickNodeId(repaired, "SaveImage");
-
-  const clipIds = findNodeIdsByType(repaired, "CLIPTextEncode");
-  const positiveClipId = clipIds.find(id => /positive/i.test(String(repaired[id]?._meta?.title || ""))) || clipIds[0] || null;
-  const negativeClipId = clipIds.find(id => /negative/i.test(String(repaired[id]?._meta?.title || ""))) || clipIds[1] || clipIds[0] || null;
-
-  for (const id of ids) {
-    const node = repaired[id];
-    if (!node || !node.inputs) continue;
-
-    if (node.class_type === "CLIPTextEncode") {
-      setLinkInput(repaired, id, "clip", ckptId, 1);
-    }
-
-    if (node.class_type === "KSampler") {
-      setLinkInput(repaired, id, "model", ckptId, 0);
-      setLinkInput(repaired, id, "positive", positiveClipId, 0);
-      setLinkInput(repaired, id, "negative", negativeClipId, 0);
-      setLinkInput(repaired, id, "latent_image", vaeEncodeId || emptyLatentId, 0);
-    }
-
-    if (node.class_type === "VAEEncode") {
-      setLinkInput(repaired, id, "pixels", loadImageId, 0);
-      setLinkInput(repaired, id, "vae", ckptId, 2);
-    }
-
-    if (node.class_type === "VAEDecode") {
-      setLinkInput(repaired, id, "samples", ksamplerId, 0);
-      setLinkInput(repaired, id, "vae", ckptId, 2);
-    }
-
-    if (node.class_type === "ImageUpscaleWithModel") {
-      setLinkInput(repaired, id, "image", loadImageId || vaeDecodeId, 0);
-      setLinkInput(repaired, id, "upscale_model", upscaleModelId, 0);
-    }
-
-    if (node.class_type === "ImageScaleBy") {
-      setLinkInput(repaired, id, "image", upscaleImageId || loadImageId || vaeDecodeId, 0);
-    }
-
-    if (node.class_type === "SaveImage") {
-      setLinkInput(repaired, id, "images", vaeDecodeId || imageScaleId || upscaleImageId, 0);
-    }
-  }
-
-  if (saveImageId) {
-    setLinkInput(
-      repaired,
-      saveImageId,
-      "images",
-      pickNodeId(repaired, "VAEDecode") || pickNodeId(repaired, "ImageScaleBy") || pickNodeId(repaired, "ImageUpscaleWithModel"),
-      0
-    );
-  }
-
-  return repaired;
-}
-
 async function generateWithOpenAI(prompt, apiKey) {
   const normalizedKey = normalizeApiKey(apiKey);
   const response = await fetchWithTimeout("https://api.openai.com/v1/responses", {
@@ -351,7 +343,7 @@ async function generateWithOpenAI(prompt, apiKey) {
   }
 
   const data = await response.json();
-  return validateWorkflow(extractJsonObject(data.output_text || ""));
+  return extractJsonObject(data.output_text || "");
 }
 
 async function generateWithOpenRouter(prompt, apiKey, model = DEFAULT_OPENROUTER_MODEL) {
@@ -383,8 +375,7 @@ async function generateWithOpenRouter(prompt, apiKey, model = DEFAULT_OPENROUTER
   }
 
   const data = await response.json();
-  const text = data.choices?.[0]?.message?.content || "";
-  return validateWorkflow(extractJsonObject(text));
+  return extractJsonObject(data.choices?.[0]?.message?.content || "");
 }
 
 async function generateWithGoogle(prompt, apiKey) {
@@ -416,11 +407,10 @@ async function generateWithGoogle(prompt, apiKey) {
   }
 
   const data = await response.json();
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
-  return validateWorkflow(extractJsonObject(text));
+  return extractJsonObject(data.candidates?.[0]?.content?.parts?.[0]?.text || "");
 }
 
-async function generateWorkflowWithProvider(provider, prompt, apiKey, options = {}) {
+async function generateDraftWithProvider(provider, prompt, apiKey, options = {}) {
   if (provider === "openai") {
     return generateWithOpenAI(prompt, apiKey);
   }
@@ -449,39 +439,28 @@ module.exports = async (req, res) => {
       "";
 
     if (!apiKey) {
-      res.status(400).json({
-        error: "API key is required. Provide a key and choose openrouter, openai, or google."
-      });
+      res.status(400).json({ error: "API key is required. Provide a key and choose openrouter, openai, or google." });
       return;
     }
 
     if (provider === "local") {
-      res.status(400).json({
-        error: "provider=local is disabled. Use openrouter, openai, or google."
-      });
+      res.status(400).json({ error: "provider=local is disabled. Use openrouter, openai, or google." });
       return;
     }
 
-    const parsedPrompt = parseArgs(prompt);
-    const workflowApi = normalizeWorkflowShape(
-      await generateWorkflowWithProvider(provider, prompt, apiKey, { openrouterModel })
-    );
-    let workflowCandidate = validateWorkflow(
-      normalizeRuntimeDefaults(normalizeWorkflowLinks(workflowApi), parsedPrompt.ckptName || DEFAULT_CKPT_NAME)
-    );
-    if (hasBrokenLinks(workflowCandidate)) {
-      workflowCandidate = validateWorkflow(autoRepairLinks(workflowCandidate));
-      if (hasBrokenLinks(workflowCandidate)) {
-        res.status(422).json({
-          error: "Provider returned incomplete links and auto-repair could not resolve all required connections."
-        });
-        return;
-      }
-    }
+    const draft = await generateDraftWithProvider(provider, prompt, apiKey, { openrouterModel });
+    const { intent, workflow } = compileWorkflowFromPromptAndDraft(prompt, draft);
+    const normalized = validateWorkflow(normalizeRuntimeDefaults(workflow, parsePromptHints(prompt).ckptName));
+    const workflowUi = apiWorkflowToUiWorkflow(normalized);
 
-    const workflow = workflowCandidate;
-    const workflowUi = apiWorkflowToUiWorkflow(workflow);
-    res.status(200).json({ workflow, workflowUi, mode: "byok-generated", provider, template: "llm-generated" });
+    res.status(200).json({
+      workflow: normalized,
+      workflowUi,
+      draft,
+      mode: "byok-compiled",
+      provider,
+      template: intent
+    });
   } catch (error) {
     const message = error.message || "Invalid request body.";
     if (/timed out/i.test(message)) {
