@@ -1,7 +1,6 @@
 ﻿const promptInput = document.getElementById("prompt");
 const output = document.getElementById("output");
 const providerInput = document.getElementById("provider");
-const templateInput = document.getElementById("template");
 const apiKeyInput = document.getElementById("apiKey");
 const generateBtn = document.getElementById("generateBtn");
 const downloadBtn = document.getElementById("downloadBtn");
@@ -27,7 +26,6 @@ async function generateWorkflow() {
       body: JSON.stringify({
         prompt: promptInput.value,
         provider,
-        template: templateInput.value,
         apiKey
       })
     });

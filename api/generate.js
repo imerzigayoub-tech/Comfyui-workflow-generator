@@ -78,19 +78,15 @@ function normalizeWorkflowShape(candidate) {
 
 function workflowSystemPrompt() {
   return [
-    "You generate ComfyUI workflow JSON from user intent.",
+    "You generate ComfyUI workflow JSON directly from the user's request.",
     "Return ONLY one JSON object (no markdown, no explanation).",
-    "The object must be a valid ComfyUI workflow graph: keys are node ids as strings.",
-    "Each node must have: class_type, inputs, _meta.title.",
-    "IMPORTANT: linked inputs MUST use exact reference format: [\"<node_id>\", <output_index>].",
-    "Example: KSampler inputs.model = [\"1\", 0], positive = [\"2\", 0].",
-    "Prefer common built-in nodes only.",
-    "Use one of these structures depending on intent:",
-    "- txt2img: CheckpointLoaderSimple, CLIPTextEncode (pos/neg), EmptyLatentImage, KSampler, VAEDecode, SaveImage",
-    "- img2img: include LoadImage and VAEEncode before KSampler",
-    "- upscale: include LoadImage, UpscaleModelLoader, ImageUpscaleWithModel, SaveImage",
-    "If uncertain, choose txt2img.",
-    "Set reasonable defaults for steps/cfg/size/seed.",
+    "The object MUST be a valid ComfyUI API workflow graph where keys are node ids as strings.",
+    "Each node must include: class_type, inputs, _meta.title.",
+    "Linked inputs MUST use this exact format: [\"<node_id>\", <output_index>].",
+    "Build topology according to user intent, not from a fixed template.",
+    "If the user asks for specific operations (img2img, upscale, controlnet, inpaint, LoRA, IPAdapter, etc.), include corresponding nodes.",
+    "If uncertain, build the smallest runnable graph for the described goal.",
+    "Use realistic values and keep all required links connected.",
     "Output strictly JSON only."
   ].join(" ");
 }

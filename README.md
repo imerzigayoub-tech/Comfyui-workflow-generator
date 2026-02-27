@@ -3,22 +3,10 @@
 Web app that converts a text prompt into a ComfyUI workflow JSON using your provider API key (BYOK).
 
 ## Features
-- Prompt to workflow JSON with multiple templates:
-  - `txt2img_fast`
-  - `txt2img_refine`
-  - `txt2img_upscale`
-  - `img2img` (includes `LoadImage` + `VAEEncode`)
-  - `upscale` (includes `UpscaleModelLoader` + `ImageUpscaleWithModel`)
-- Supports inline prompt controls:
-  - `--neg ...` negative prompt
-  - `--steps N` sampling steps
-  - `--cfg N` guidance scale
-  - `--ar W:H` aspect ratio (auto-sized around 1024)
-  - `--mode txt2img|img2img|upscale`
+- Prompt-only workflow generation via BYOK provider API (`OpenRouter`, `OpenAI`, `Google`)
+- Workflow topology is generated from your prompt intent (no template selector)
+- Optional inline controls in prompt:
   - `--ckpt your_model.safetensors`
-  - `--denoise 0.65` (img2img)
-  - `--upscale 2` (upscale)
-  - `--image input.png` (img2img/upscale source image name)
 - BYOK mode: choose `OpenRouter`, `OpenAI`, or `Google Gemini` and provide your API key
   - Provider generates a full ComfyUI workflow JSON from the prompt
 - Download generated `workflow.json`
