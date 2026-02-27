@@ -2,8 +2,8 @@ const { apiWorkflowToUiWorkflow } = require("../lib/workflow");
 
 const DEFAULT_CKPT_NAME = process.env.DEFAULT_CKPT_NAME || "sd_xl_base_1.0.safetensors";
 const DEFAULT_OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "openai/gpt-4o-mini";
-const REQUEST_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 25000);
-const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 2600);
+const REQUEST_TIMEOUT_MS = Number(process.env.LLM_TIMEOUT_MS || 60000);
+const LLM_MAX_TOKENS = Number(process.env.LLM_MAX_TOKENS || 900);
 
 const SCHEDULERS = new Set(["simple", "sgm_uniform", "karras", "exponential", "ddim_uniform", "beta", "normal", "linear_quadratic", "kl_optimal"]);
 const DEFAULT_NEG = "blurry, low quality, artifacts, deformed";
@@ -81,14 +81,13 @@ function validateWorkflow(workflow) {
 
 function workflowSystemPrompt() {
   return [
-    "You are generating a ComfyUI workflow draft from the user prompt.",
-    "Return JSON only.",
-    "Preferred output format:",
-    "{ intent, prompt, negativePrompt, steps, cfg, width, height, denoise, sourceImage, upscaleFactor, ckpt_name, workflow? }",
-    "intent should be one of: txt2img, txt2img_refine, img2img, upscale.",
-    "workflow is optional draft graph; if provided use ComfyUI-style node object keys.",
-    "If unsure, still provide intent and core generation params.",
-    "No markdown." 
+    "You are generating a compact workflow PLAN from the user prompt.",
+    "Return JSON only, no markdown.",
+    "Return ONLY this object shape:",
+    "{ intent, prompt, negativePrompt, steps, cfg, width, height, denoise, sourceImage, upscaleFactor, ckpt_name }",
+    "intent must be one of: txt2img, txt2img_refine, img2img, upscale.",
+    "Do NOT output full workflow nodes.",
+    "Keep values concise and valid."
   ].join(" ");
 }
 
@@ -384,34 +383,48 @@ async function generateWithOpenAI(prompt, apiKey) {
 
 async function generateWithOpenRouter(prompt, apiKey, model = DEFAULT_OPENROUTER_MODEL) {
   const normalizedKey = normalizeApiKey(apiKey);
-  const response = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${normalizedKey}`,
-      "X-API-Key": normalizedKey,
-      "Content-Type": "application/json",
-      "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost",
-      "X-Title": process.env.OPENROUTER_APP_NAME || "ComfyUI Workflow Generator"
-    },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: workflowSystemPrompt() },
-        { role: "user", content: prompt || "" }
-      ],
-      temperature: 0.2,
-      max_tokens: LLM_MAX_TOKENS,
-      response_format: { type: "json_object" }
-    })
-  });
+  const modelsToTry = [model, "openai/gpt-4o-mini"];
+  let lastError = null;
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`BYOK request failed (${response.status}): ${body.slice(0, 300)}`);
+  for (const modelName of modelsToTry) {
+    try {
+      const response = await fetchWithTimeout("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${normalizedKey}`,
+          "X-API-Key": normalizedKey,
+          "Content-Type": "application/json",
+          "HTTP-Referer": process.env.OPENROUTER_SITE_URL || "http://localhost",
+          "X-Title": process.env.OPENROUTER_APP_NAME || "ComfyUI Workflow Generator"
+        },
+        body: JSON.stringify({
+          model: modelName,
+          messages: [
+            { role: "system", content: workflowSystemPrompt() },
+            { role: "user", content: prompt || "" }
+          ],
+          temperature: 0.2,
+          max_tokens: LLM_MAX_TOKENS,
+          response_format: { type: "json_object" }
+        })
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        throw new Error(`BYOK request failed (${response.status}): ${body.slice(0, 300)}`);
+      }
+
+      const data = await response.json();
+      return extractJsonObject(data.choices?.[0]?.message?.content || "");
+    } catch (error) {
+      lastError = error;
+      if (!/timed out/i.test(String(error?.message || ""))) {
+        throw error;
+      }
+    }
   }
 
-  const data = await response.json();
-  return extractJsonObject(data.choices?.[0]?.message?.content || "");
+  throw lastError || new Error("BYOK request failed for OpenRouter.");
 }
 
 async function generateWithGoogle(prompt, apiKey) {

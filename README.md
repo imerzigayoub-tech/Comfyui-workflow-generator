@@ -37,8 +37,8 @@ Note: generation is BYOK-only. Local `server.js` serves the frontend only.
 - Upscale template default model is `4x-UltraSharp.pth` (also in `lib/workflow.js`).
 - BYOK latency/reliability env vars:
   - `OPENROUTER_MODEL` (default `openai/gpt-4o-mini`)
-  - `LLM_TIMEOUT_MS` (default `25000`)
-  - `LLM_MAX_TOKENS` (default `2600`)
+  - `LLM_TIMEOUT_MS` (default `60000`)
+  - `LLM_MAX_TOKENS` (default `900`)
 
 ## Vercel Deploy
 - This repo includes a Vercel serverless route at `api/generate.js`.
