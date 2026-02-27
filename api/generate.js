@@ -125,6 +125,50 @@ function normalizeWorkflowLinks(workflow) {
   return normalized;
 }
 
+const REQUIRED_LINK_INPUTS = {
+  CLIPTextEncode: ["clip"],
+  KSampler: ["model", "positive", "negative", "latent_image"],
+  VAEDecode: ["samples", "vae"],
+  SaveImage: ["images"],
+  VAEEncode: ["pixels", "vae"],
+  ImageUpscaleWithModel: ["image", "upscale_model"],
+  ImageScaleBy: ["image"]
+};
+
+function isValidLinkRef(value, nodeIdsSet) {
+  if (!(Array.isArray(value) && value.length === 2)) {
+    return false;
+  }
+  const fromId = String(value[0]);
+  const slot = Number(value[1]);
+  return nodeIdsSet.has(fromId) && Number.isFinite(slot) && slot >= 0;
+}
+
+function hasBrokenLinks(workflow) {
+  const nodeIds = Object.keys(workflow || {});
+  const nodeIdsSet = new Set(nodeIds);
+
+  for (const id of nodeIds) {
+    const node = workflow[id];
+    const inputs = node.inputs || {};
+
+    for (const value of Object.values(inputs)) {
+      if (Array.isArray(value) && !isValidLinkRef(value, nodeIdsSet)) {
+        return true;
+      }
+    }
+
+    const required = REQUIRED_LINK_INPUTS[node.class_type] || [];
+    for (const inputName of required) {
+      if (!isValidLinkRef(inputs[inputName], nodeIdsSet)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
+}
+
 async function generateWithOpenAI(prompt, apiKey) {
   const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -239,7 +283,22 @@ module.exports = async (req, res) => {
 
     if (apiKey && provider !== "local") {
       const workflowApi = normalizeWorkflowShape(await generateWorkflowWithProvider(provider, prompt, apiKey));
-      const workflow = validateWorkflow(normalizeWorkflowLinks(workflowApi));
+      const workflowCandidate = validateWorkflow(normalizeWorkflowLinks(workflowApi));
+      if (hasBrokenLinks(workflowCandidate)) {
+        const { template, workflow } = buildWorkflow(prompt, requestedTemplate);
+        const workflowUi = apiWorkflowToUiWorkflow(workflow);
+        res.status(200).json({
+          workflow,
+          workflowUi,
+          mode: "byok-repaired",
+          provider,
+          template,
+          warning: "BYOK workflow had incomplete links and was auto-repaired."
+        });
+        return;
+      }
+
+      const workflow = workflowCandidate;
       const workflowUi = apiWorkflowToUiWorkflow(workflow);
       res.status(200).json({ workflow, workflowUi, mode: "byok-generated", provider, template: "llm-generated" });
       return;
