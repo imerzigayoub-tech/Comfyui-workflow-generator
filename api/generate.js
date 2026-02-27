@@ -327,6 +327,13 @@ module.exports = async (req, res) => {
       req.headers["x-google-api-key"] ||
       "";
 
+    if (apiKey && provider === "local") {
+      res.status(400).json({
+        error: "API key provided with provider=local. Choose openrouter, openai, or google for BYOK generation."
+      });
+      return;
+    }
+
     if (apiKey && provider !== "local") {
       const parsedPrompt = parseArgs(prompt);
       const workflowApi = normalizeWorkflowShape(await generateWorkflowWithProvider(provider, prompt, apiKey));
@@ -334,15 +341,8 @@ module.exports = async (req, res) => {
         normalizeRuntimeDefaults(normalizeWorkflowLinks(workflowApi), parsedPrompt.ckptName || DEFAULT_CKPT_NAME)
       );
       if (hasBrokenLinks(workflowCandidate)) {
-        const { template, workflow } = buildWorkflow(prompt, requestedTemplate);
-        const workflowUi = apiWorkflowToUiWorkflow(workflow);
-        res.status(200).json({
-          workflow,
-          workflowUi,
-          mode: "byok-repaired",
-          provider,
-          template,
-          warning: "BYOK workflow had incomplete links and was auto-repaired."
+        res.status(422).json({
+          error: "Provider returned incomplete links. No local fallback used in strict BYOK mode."
         });
         return;
       }

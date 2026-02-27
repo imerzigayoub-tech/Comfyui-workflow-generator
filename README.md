@@ -21,6 +21,7 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
   - `--image input.png` (img2img/upscale source image name)
 - Optional BYOK mode: choose `OpenRouter`, `OpenAI`, or `Google Gemini` and provide your API key
   - In BYOK mode, the provider generates a full ComfyUI workflow JSON from the prompt
+  - BYOK execution is available on deployed `/api/generate` (Vercel serverless route)
 - Download generated `workflow.json`
   - Download now exports node-based `workflow-ui.json` for ComfyUI canvas import
 
@@ -35,6 +36,8 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
    ```
 3. Open:
    - `http://localhost:3000`
+
+Note: local `server.js` is for local parser workflows. API-key BYOK generation runs through deployed serverless API.
 
 ## Import into ComfyUI
 1. Generate and download `workflow.json` from this app.

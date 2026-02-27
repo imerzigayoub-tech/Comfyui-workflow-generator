@@ -15,14 +15,20 @@ async function generateWorkflow() {
   generateBtn.textContent = "Generating...";
 
   try {
+    const apiKey = apiKeyInput.value.trim();
+    const provider = providerInput.value;
+    if (apiKey && provider === "local") {
+      throw new Error("API key is set but provider is Local. Choose OpenRouter, OpenAI, or Google.");
+    }
+
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt: promptInput.value,
-        provider: providerInput.value,
+        provider,
         template: templateInput.value,
-        apiKey: apiKeyInput.value.trim()
+        apiKey
       })
     });
 

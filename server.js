@@ -60,6 +60,12 @@ const server = http.createServer((req, res) => {
     req.on("end", () => {
       try {
         const payload = JSON.parse(body || "{}");
+        if (payload.apiKey) {
+          sendJson(res, 400, {
+            error: "Local server mode does not execute BYOK providers. Use deployed /api/generate on Vercel for API-key generation."
+          });
+          return;
+        }
         const requestedTemplate = (payload.template || "auto").toLowerCase();
         const { template, workflow } = buildWorkflow(payload.prompt || "", requestedTemplate);
         const workflowUi = apiWorkflowToUiWorkflow(workflow);
