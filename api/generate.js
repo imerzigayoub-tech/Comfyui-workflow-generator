@@ -508,7 +508,7 @@ module.exports = async (req, res) => {
       draft,
       mode: "byok-compiled",
       provider,
-      template: intent
+      intent
     });
   } catch (error) {
     const message = error.message || "Invalid request body.";

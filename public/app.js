@@ -45,11 +45,11 @@ async function generateWorkflow() {
     latestWorkflowApi = data.workflow || null;
     latestWorkflow = data.workflowUi || data.workflow || null;
     output.textContent = JSON.stringify(latestWorkflow, null, 2);
-    statusText.textContent = `Mode: ${data.mode || "unknown"} | Template: ${data.template || "unknown"}`;
+    statusText.textContent = `Mode: ${data.mode || "unknown"} | Intent: ${data.intent || "unknown"}`;
     downloadBtn.disabled = false;
   } catch (error) {
     output.textContent = `Error: ${error.message}`;
-    statusText.textContent = "Mode: error | Template: n/a";
+    statusText.textContent = "Mode: error | Intent: n/a";
     latestWorkflow = null;
     downloadBtn.disabled = true;
   } finally {
