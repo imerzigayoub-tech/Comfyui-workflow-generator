@@ -37,6 +37,20 @@ function validateWorkflow(workflow) {
     }
   }
 
+  let linkRefCount = 0;
+  for (const id of nodeIds) {
+    const node = workflow[id];
+    for (const value of Object.values(node.inputs || {})) {
+      if (Array.isArray(value) && value.length === 2) {
+        linkRefCount += 1;
+      }
+    }
+  }
+
+  if (linkRefCount === 0) {
+    throw new Error("Generated workflow has no links between nodes.");
+  }
+
   return workflow;
 }
 
@@ -60,6 +74,8 @@ function workflowSystemPrompt() {
     "Return ONLY one JSON object (no markdown, no explanation).",
     "The object must be a valid ComfyUI workflow graph: keys are node ids as strings.",
     "Each node must have: class_type, inputs, _meta.title.",
+    "IMPORTANT: linked inputs MUST use exact reference format: [\"<node_id>\", <output_index>].",
+    "Example: KSampler inputs.model = [\"1\", 0], positive = [\"2\", 0].",
     "Prefer common built-in nodes only.",
     "Use one of these structures depending on intent:",
     "- txt2img: CheckpointLoaderSimple, CLIPTextEncode (pos/neg), EmptyLatentImage, KSampler, VAEDecode, SaveImage",
@@ -69,6 +85,44 @@ function workflowSystemPrompt() {
     "Set reasonable defaults for steps/cfg/size/seed.",
     "Output strictly JSON only."
   ].join(" ");
+}
+
+function normalizeLinkValue(value) {
+  if (Array.isArray(value) && value.length === 2) {
+    return [String(value[0]), Number(value[1]) || 0];
+  }
+
+  if (value && typeof value === "object") {
+    const nodeId = value.node ?? value.node_id ?? value.id ?? value.from;
+    const slot = value.output ?? value.slot ?? value.index ?? value.out;
+    if (nodeId !== undefined && slot !== undefined) {
+      return [String(nodeId), Number(slot) || 0];
+    }
+  }
+
+  if (typeof value === "string") {
+    const match = value.match(/^\s*(\d+)\s*[:|,]\s*(\d+)\s*$/);
+    if (match) {
+      return [match[1], Number(match[2]) || 0];
+    }
+  }
+
+  return value;
+}
+
+function normalizeWorkflowLinks(workflow) {
+  const normalized = {};
+  for (const [id, node] of Object.entries(workflow || {})) {
+    const inputs = {};
+    for (const [name, value] of Object.entries(node.inputs || {})) {
+      inputs[name] = normalizeLinkValue(value);
+    }
+    normalized[String(id)] = {
+      ...node,
+      inputs
+    };
+  }
+  return normalized;
 }
 
 async function generateWithOpenAI(prompt, apiKey) {
@@ -185,7 +239,7 @@ module.exports = async (req, res) => {
 
     if (apiKey && provider !== "local") {
       const workflowApi = normalizeWorkflowShape(await generateWorkflowWithProvider(provider, prompt, apiKey));
-      const workflow = validateWorkflow(workflowApi);
+      const workflow = validateWorkflow(normalizeWorkflowLinks(workflowApi));
       const workflowUi = apiWorkflowToUiWorkflow(workflow);
       res.status(200).json({ workflow, workflowUi, mode: "byok-generated", provider, template: "llm-generated" });
       return;
