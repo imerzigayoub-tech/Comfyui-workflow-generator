@@ -14,7 +14,15 @@
     <label for="prompt">Prompt</label>
     <textarea id="prompt" placeholder="Example: futuristic city at sunset, volumetric light --ar 16:9 --steps 35 --cfg 8 --neg blurry, lowres"></textarea>
 
-    <label for="apiKey">OpenAI API Key (Optional BYOK)</label>
+    <label for="provider">Provider</label>
+    <select id="provider">
+      <option value="local">Local parser (no key)</option>
+      <option value="openrouter">OpenRouter (BYOK)</option>
+      <option value="openai">OpenAI (BYOK)</option>
+      <option value="google">Google Gemini (BYOK)</option>
+    </select>
+
+    <label for="apiKey">API Key (Optional)</label>
     <input id="apiKey" type="password" placeholder="sk-... (optional)" autocomplete="off" />
 
     <div class="actions">

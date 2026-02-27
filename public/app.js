@@ -1,5 +1,6 @@
 ﻿const promptInput = document.getElementById("prompt");
 const output = document.getElementById("output");
+const providerInput = document.getElementById("provider");
 const apiKeyInput = document.getElementById("apiKey");
 const generateBtn = document.getElementById("generateBtn");
 const downloadBtn = document.getElementById("downloadBtn");
@@ -14,7 +15,11 @@ async function generateWorkflow() {
     const response = await fetch("/api/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt: promptInput.value, apiKey: apiKeyInput.value.trim() })
+      body: JSON.stringify({
+        prompt: promptInput.value,
+        provider: providerInput.value,
+        apiKey: apiKeyInput.value.trim()
+      })
     });
 
     if (!response.ok) {

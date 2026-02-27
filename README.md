@@ -9,7 +9,7 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
   - `--steps N` sampling steps
   - `--cfg N` guidance scale
   - `--ar W:H` aspect ratio (auto-sized around 1024)
-- Optional BYOK mode: add your OpenAI API key in the UI to parse prompt into tuned parameters
+- Optional BYOK mode: choose `OpenRouter`, `OpenAI`, or `Google Gemini` and provide your API key
 - Download generated `workflow.json`
 
 ## Run
@@ -35,3 +35,4 @@ Simple local app that converts a text prompt into a ComfyUI workflow JSON.
 ## Vercel Deploy
 - This repo includes a Vercel serverless route at `api/generate.js`.
 - Frontend calls `/api/generate` and works on Vercel without running `server.js`.
+- Provider selection is sent from the UI (`local`, `openrouter`, `openai`, `google`).
